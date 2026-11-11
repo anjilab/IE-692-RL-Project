@@ -1,4 +1,4 @@
-"""Simplified blackjack from course_project_v2.pdf, page 3.
+"""Simplified blackjack.
 
 Cards 2,3,4,5 have equal probability, with replacement. Two cards are initially
 held by each participant; only one dealer card is visible. No aces or natural
@@ -11,9 +11,6 @@ The hidden card is sampled when stopping: its conditional distribution remains
 uniform because draws use replacement and player decisions do not reveal it.
 Dealer play is part of the stop action, not additional player time steps.
 Evaluation uses the fixed state (8,3), allowed by the project handout.
-
-Training uses truncated on-policy Monte Carlo with dynamic exploration time
-from assignments/Assign2_soln.ipynb (implemented in utils.py).
 """
 from dataclasses import dataclass
 import numpy as np

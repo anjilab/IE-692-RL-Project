@@ -1,4 +1,4 @@
-"""True Online TD(lambda), with tabular values and Dutch traces."""
+"""True Online TD(lambda), with tabular values"""
 
 
 def update(theta, trace, q_old, z, z_next, cost, gamma, alpha, lam, terminal=False):

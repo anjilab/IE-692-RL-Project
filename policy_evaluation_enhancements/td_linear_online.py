@@ -1,4 +1,4 @@
-"""True Online TD(lambda) with linear features and Dutch traces."""
+"""True Online TD(lambda) with linear features"""
 
 
 def update(theta, trace, q_old, phi, phi_next, cost, gamma, alpha, lam):

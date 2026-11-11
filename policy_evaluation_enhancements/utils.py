@@ -1,8 +1,5 @@
-"""Shared online Monte Carlo evaluation, Euclidean SPMD, tuning and outputs.
+"""Online Monte Carlo evaluation, Euclidean SPMD, tuning and outputs.
 
-The training baseline follows Assignment 2's dynamic coverage rule along one
-on-policy stream. The generative Monte Carlo helper is retained only for
-independent reference estimates and earlier validation tests.
 """
 import argparse
 import csv

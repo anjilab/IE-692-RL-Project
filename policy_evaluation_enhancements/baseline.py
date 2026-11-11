@@ -2,8 +2,6 @@
 Movement and costs follow assignments/RL_Assignment1_GridWorldProblem.pdf.
 Goals/hazards reset on the next move with probability .8, not termination.
 
-Training uses truncated on-policy Monte Carlo with dynamic exploration time
-from assignments/Assign2_soln.ipynb (implemented in utils.py).
 """
 from dataclasses import dataclass
 import numpy as np
