@@ -1,0 +1,52 @@
+{
+  "test_seeds": [
+    101,
+    202
+  ],
+  "tuning_seed": 17,
+  "alphas": [
+    0.01,
+    0.05,
+    0.1
+  ],
+  "nonzero_lambdas": [
+    0.3,
+    0.6,
+    0.9
+  ],
+  "td0_ablation": true,
+  "policy_update": "utils.mirror_step: unchanged Euclidean SPMD",
+  "environments": {
+    "gridworld": {
+      "fixed": 4000,
+      "control": 10000,
+      "eval_steps": 1000,
+      "horizons": [
+        40,
+        70,
+        100
+      ]
+    },
+    "blackjack": {
+      "fixed": 1000,
+      "control": 2000,
+      "eval_steps": 200,
+      "horizons": [
+        2,
+        3,
+        4
+      ]
+    }
+  },
+  "tuning_budget": "10% of each full control budget per candidate; cached fixed-policy streams reused across candidates",
+  "primary_error": "sqrt(sum(nu_pi(s)*pi(a|s)*(Q_est-Q_pi)^2)), exact diagnostic reference",
+  "sampling": "continuous online paths; no stationary-distribution oracle or forced starts",
+  "weighting": "stationary weights are diagnostic only; blackjack stream resets after terminal hands",
+  "control_td": "warm-start theta across policy updates; reset traces and old prediction",
+  "baseline_fixed": "average all completed coverage rounds; no estimate until first complete round",
+  "baseline_control": "fresh first-visit estimate after each coverage round; incomplete rounds keep policy unchanged",
+  "validation": "separate sampled V recorded at every policy update and plotting checkpoint",
+  "plotting": "training observations on x axis; validation observations reported separately",
+  "quick": true,
+  "numpy_version": "2.5.4"
+}

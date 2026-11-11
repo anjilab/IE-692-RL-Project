@@ -1,10 +1,16 @@
-"""10 x 10 GridWorld baseline. Run python3 baseline.py --help.
+"""10 x 10 GridWorld baseline with dynamic on-policy Monte Carlo. Run python3 baseline.py --help.
 Movement and costs follow assignments/RL_Assignment1_GridWorldProblem.pdf.
 Goals/hazards reset on the next move with probability .8, not termination.
+
+Training uses truncated on-policy Monte Carlo with dynamic exploration time
+from assignments/Assign2_soln.ipynb (implemented in utils.py).
 """
 from dataclasses import dataclass
 import numpy as np
-from utils import run_experiment
+if __package__:
+    from .utils import run_experiment
+else:
+    from utils import run_experiment
 
 
 @dataclass(frozen=True)
@@ -55,6 +61,20 @@ class GridWorld:
         return np.where(reset, self.start, row * self.cols + col), costs
 
 
+    def step_one(self, s_t, a_t, rng):
+        """Same game rules as step(), optimized for a single online move."""
+        special = s_t in self.goals or s_t in self.hazards
+        cost = 0.0 if s_t in self.goals else 1.0 if s_t in self.hazards else 0.2
+        if special and rng.random() < self.reset_probability:
+            return self.start, cost, False
+        actual = a_t
+        if rng.random() >= self.intended_probability:
+            actual = (a_t + int(rng.integers(1, 4))) % 4
+        dr, dc = ((-1, 0), (1, 0), (0, -1), (0, 1))[actual]
+        row = min(self.rows-1, max(0, s_t // self.cols + dr))
+        col = min(self.cols-1, max(0, s_t % self.cols + dc))
+        return row*self.cols + col, cost, False
+
     def step(self, states, actions, rng):
         next_states, costs = self.sample(states, actions, rng)
         return next_states, costs, np.zeros(np.shape(next_states), dtype=bool)
@@ -88,5 +108,5 @@ def plot_board(env, output):
     plt.close(fig)
 
 if __name__ == "__main__":
-    run_experiment(GridWorld(), "gridworld", [5, 10, 20], [40, 70, 100],
-                   24_000_000, 100, plot_board)
+    run_experiment(GridWorld(), "gridworld", [1, 2, 4], [40, 70, 100],
+                   1_000_000, 100, plot_board)

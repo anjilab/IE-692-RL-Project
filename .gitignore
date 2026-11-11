@@ -1,5 +1,7 @@
 .venv
-assignments/
-__pycache__/   
-Anjila_notes.md
-proposed_algo.md
+policy_evaluation_enhancements/assignments/
+policy_evaluation_enhancements/__pycache__/
+policy_evaluation_enhancements/Anjila_notes.md
+policy_evaluation_enhancements/proposed_algo.md
+policy_evaluation_enhancements/policy_evaluation_lecture/
+

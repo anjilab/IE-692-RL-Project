@@ -1,0 +1,107 @@
+{
+  "alphas": [
+    0.01,
+    0.05,
+    0.1
+  ],
+  "lambdas": [
+    0.0,
+    0.5,
+    0.9
+  ],
+  "test_seeds": [
+    101,
+    202,
+    303
+  ],
+  "tuning_seed": 17,
+  "fixed_budget": 40000,
+  "tune_budget": 4000,
+  "reference_rollouts": 1000,
+  "horizons": {
+    "gridworld": 100,
+    "blackjack": 8
+  },
+  "control_iterations": 3,
+  "control_coverage_rounds": 1,
+  "control_max_observations": 40000,
+  "score_rollouts": 500,
+  "policy_update": "utils.mirror_step (unchanged)",
+  "source": "https://proceedings.mlr.press/v32/seijen14.pdf",
+  "sampling": "Online streams from origin/fresh blackjack deals; dynamic MC coverage threshold (1-gamma)/n_actions",
+  "reference_estimator": "Generative Monte Carlo used only as an independent scoring reference",
+  "selected_settings": [
+    {
+      "environment": "gridworld",
+      "representation": "tabular",
+      "method": "td",
+      "alpha": 0.1,
+      "lam": 0.9,
+      "observations": 4000,
+      "rmse_to_mc_reference": 2.165172783051886
+    },
+    {
+      "environment": "gridworld",
+      "representation": "tabular",
+      "method": "true_online",
+      "alpha": 0.1,
+      "lam": 0.9,
+      "observations": 4000,
+      "rmse_to_mc_reference": 2.1649578481932497
+    },
+    {
+      "environment": "gridworld",
+      "representation": "linear",
+      "method": "td",
+      "alpha": 0.1,
+      "lam": 0.9,
+      "observations": 4000,
+      "rmse_to_mc_reference": 0.20821158520457334
+    },
+    {
+      "environment": "gridworld",
+      "representation": "linear",
+      "method": "true_online",
+      "alpha": 0.1,
+      "lam": 0.9,
+      "observations": 4000,
+      "rmse_to_mc_reference": 0.2084062482799344
+    },
+    {
+      "environment": "blackjack",
+      "representation": "tabular",
+      "method": "td",
+      "alpha": 0.05,
+      "lam": 0.0,
+      "observations": 4000,
+      "rmse_to_mc_reference": 0.16317272358017115
+    },
+    {
+      "environment": "blackjack",
+      "representation": "tabular",
+      "method": "true_online",
+      "alpha": 0.05,
+      "lam": 0.0,
+      "observations": 4000,
+      "rmse_to_mc_reference": 0.16317272358017118
+    },
+    {
+      "environment": "blackjack",
+      "representation": "linear",
+      "method": "td",
+      "alpha": 0.1,
+      "lam": 0.9,
+      "observations": 4000,
+      "rmse_to_mc_reference": 0.24018380934918607
+    },
+    {
+      "environment": "blackjack",
+      "representation": "linear",
+      "method": "true_online",
+      "alpha": 0.1,
+      "lam": 0.9,
+      "observations": 4000,
+      "rmse_to_mc_reference": 0.2384224840423822
+    }
+  ]
+}

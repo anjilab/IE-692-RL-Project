@@ -1,0 +1,11 @@
+environment,method,alpha,lam,horizon,spmd_step_size,horizon_status,spmd_status
+gridworld,tomc,0.0,0.0,100,0.5,fallback: no complete TOMC coverage in tuning,fallback: no completed baseline policy update in tuning
+gridworld,td_tabular,0.1,0.9,100,0.5,fallback: no complete TOMC coverage in tuning,fallback: no completed baseline policy update in tuning
+gridworld,true_tabular,0.1,0.9,100,0.5,fallback: no complete TOMC coverage in tuning,fallback: no completed baseline policy update in tuning
+gridworld,td_linear,0.1,0.6,100,0.5,fallback: no complete TOMC coverage in tuning,fallback: no completed baseline policy update in tuning
+gridworld,true_linear,0.1,0.6,100,0.5,fallback: no complete TOMC coverage in tuning,fallback: no completed baseline policy update in tuning
+blackjack,tomc,0.0,0.0,4,0.5,fallback: no complete TOMC coverage in tuning,fallback: no completed baseline policy update in tuning
+blackjack,td_tabular,0.1,0.9,4,0.5,fallback: no complete TOMC coverage in tuning,fallback: no completed baseline policy update in tuning
+blackjack,true_tabular,0.1,0.9,4,0.5,fallback: no complete TOMC coverage in tuning,fallback: no completed baseline policy update in tuning
+blackjack,td_linear,0.1,0.6,4,0.5,fallback: no complete TOMC coverage in tuning,fallback: no completed baseline policy update in tuning
+blackjack,true_linear,0.1,0.6,4,0.5,fallback: no complete TOMC coverage in tuning,fallback: no completed baseline policy update in tuning

@@ -1,0 +1,7 @@
+environment,seed,observations,exploration_observations,tail_observations,coverage_rounds,completed_rounds,required_pairs,visited_required_pairs,threshold,complete,status
+gridworld,101,40000,40000,0,1,0,400,370,0.024999999999999994,False,incomplete_coverage
+gridworld,202,40000,40000,0,1,0,400,376,0.024999999999999994,False,incomplete_coverage
+gridworld,303,40000,40000,0,1,0,400,380,0.024999999999999994,False,incomplete_coverage
+blackjack,101,586,579,7,1,1,64,64,0.04999999999999999,True,complete
+blackjack,202,520,513,7,1,1,64,64,0.04999999999999999,True,complete
+blackjack,303,754,747,7,1,1,64,64,0.04999999999999999,True,complete

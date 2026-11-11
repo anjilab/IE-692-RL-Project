@@ -1,0 +1,48 @@
+{
+  "rollouts": [
+    1
+  ],
+  "horizons": [
+    40
+  ],
+  "step_sizes": [
+    0.5
+  ],
+  "budget": 200000,
+  "tune_fraction": 0.5,
+  "eval_rollouts": 1000,
+  "eval_horizon": 100,
+  "seed": 692,
+  "output": "gridworld_dynamic_longer_check",
+  "plot": false,
+  "environment": {
+    "rows": 10,
+    "cols": 10,
+    "goals": [
+      9,
+      90,
+      99
+    ],
+    "hazards": [
+      12,
+      17,
+      24,
+      36,
+      43,
+      58,
+      62,
+      75,
+      81,
+      87
+    ],
+    "start": 0,
+    "gamma": 0.9,
+    "intended_probability": 0.8,
+    "reset_probability": 0.8
+  },
+  "name": "gridworld",
+  "evaluator": "truncated_on_policy_mc_dynamic_exploration",
+  "status": "no_candidate_completed_an_update",
+  "tuning_budget_per_candidate": 100000,
+  "total_tuning_observations": 200000
+}
