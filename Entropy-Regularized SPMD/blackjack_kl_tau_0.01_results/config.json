@@ -1,0 +1,54 @@
+{
+  "rollouts": [
+    5,
+    10,
+    20
+  ],
+  "horizons": [
+    2,
+    3,
+    4
+  ],
+  "step_sizes": [
+    0.5,
+    1.0,
+    5.0
+  ],
+  "budget": 120000,
+  "tune_fraction": 0.1,
+  "eval_rollouts": 1000,
+  "eval_horizon": 8,
+  "seed": 692,
+  "output": "/Users/snowman/codes/coursework/RL/IE-692-RL-Project/Entropy-Regularized SPMD/blackjack_kl_tau_0.01_results",
+  "plot": false,
+  "environment": {
+    "gamma": 0.9,
+    "evaluation_total": 8,
+    "evaluation_dealer": 3
+  },
+  "name": "blackjack",
+  "selected_settings": {
+    "rollouts": 5,
+    "horizon": 3,
+    "step_size": 5.0,
+    "start_cost": 0.23790000000000003,
+    "standard_error": 0.02745227162216667,
+    "iterations": 26,
+    "training_budget": 12000,
+    "training_observations": 11194,
+    "evaluation_observations": 1504
+  },
+  "evaluation_start": "player total 8, dealer showing 3",
+  "training_seed": 693,
+  "tuning_budget_per_candidate": 12000,
+  "total_tuning_observations": 315000,
+  "full_run_observations": 534968,
+  "training_tail_bound": null,
+  "notes": [
+    "Each candidate has the same training-budget cap. Unused budget is less than one worst-case sweep.",
+    "Scoring samples are additional and counted separately. All candidates use the same scoring horizon.",
+    "Initial state/action sampling follows the notebook generative interface; subsequent actions are on-policy.",
+    "Blackjack training may truncate unfinished hands; scoring horizon defaults to 8 and completes every hand.",
+    "One seed is preliminary evidence; repeat runs before drawing final conclusions."
+  ]
+}
