@@ -1,2 +1,0 @@
-rollouts,horizon,step_size,start_cost,standard_error,iterations,status,required_pairs,visited_required_pairs,training_budget,training_observations,evaluation_observations
-1,40,0.5,2.263150503223928,0.007683263876921864,0,incomplete_coverage,400,383,100000,100000,100000

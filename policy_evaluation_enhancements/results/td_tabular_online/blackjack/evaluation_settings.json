@@ -1,0 +1,26 @@
+{
+  "environment": "blackjack",
+  "method": "td_tabular_online",
+  "task": "evaluation",
+  "test_seeds": [
+    200,
+    201,
+    202,
+    203,
+    204
+  ],
+  "tuning_seeds": [
+    100,
+    101,
+    102
+  ],
+  "parameters": {
+    "alpha": 0.05,
+    "lam": 0.3,
+    "horizon": 4,
+    "step_size": 0.5
+  },
+  "parameter_source": "provided starting values",
+  "n_steps": 40000,
+  "update_every": 500
+}
