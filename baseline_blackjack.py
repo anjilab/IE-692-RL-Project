@@ -1,4 +1,4 @@
-"""Simplified blackjack from course_project_v2.pdf, page 3.
+"""Simplified blackjack.
 
 Cards 2,3,4,5 have equal probability, with replacement. Two cards are initially
 held by each participant; only one dealer card is visible. No aces or natural
@@ -14,7 +14,10 @@ Evaluation uses the fixed state (8,3), allowed by the project handout.
 """
 from dataclasses import dataclass
 import numpy as np
-from utils import run_experiment
+if __package__:
+    from .utils import run_experiment
+else:
+    from utils import run_experiment
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,21 @@ class Blackjack:
         total, dealer = self.decode(state)
         return dict(player_total=int(total), dealer_card=int(dealer))
 
+    def step_one(self, s_t, a_t, rng):
+        """Same blackjack rules as step(), for one online player decision."""
+        player = s_t // 4 + 4
+        visible = s_t % 4 + 2
+        if a_t == 1:
+            player += int(rng.integers(2, 6))
+            if player > 11:
+                return s_t, 1.0, True
+            return (player-4)*4 + visible-2, 0.0, False
+        dealer = visible + int(rng.integers(2, 6))
+        while dealer < 9:
+            dealer += int(rng.integers(2, 6))
+        cost = -1.0 if dealer > 11 or player > dealer else 1.0 if player < dealer else 0.0
+        return s_t, cost, True
+
     def step(self, states, actions, rng):
         states, actions = np.broadcast_arrays(np.asarray(states, dtype=int), np.asarray(actions, dtype=int))
         if np.any((states < 0) | (states >= self.n_states)) or np.any((actions < 0) | (actions >= 2)):
@@ -77,4 +95,4 @@ class Blackjack:
 
 
 if __name__ == '__main__':
-    run_experiment(Blackjack(), 'blackjack', [5, 10, 20], [2, 3, 4], 120_000, 8)
+    run_experiment(Blackjack(), 'blackjack', [1, 2, 4], [2, 3, 4], 120_000, 8)
