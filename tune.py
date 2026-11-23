@@ -2,8 +2,10 @@
 
 Follows the project guideline: for each method, a grid search over at most three parameters with
 three values each; every combination runs on ``tune_fraction`` (10%) of the full observation budget,
-averaged over the tuning seeds, and the combination with the lowest mean exact gap to optimal (among
-those that made an update with every seed) runs on the full budget with the test seeds.
+averaged over the tuning seeds, and the best combination (among those that made an update with every
+seed) runs on the full budget with the test seeds. "Best" is model-free by default: the smallest mean
+certified lower bound on the optimality gap (advantage gap / policy improvement, from validation
+rollouts; ties broken by the upper bound). ``selection = exact_gap`` uses the exact gap instead.
 
     method (config.cfg)    estimator         divergence   tuned parameters
     baseline               TOMC              KL           step size x TOMC bias
@@ -33,6 +35,7 @@ import matplotlib
 matplotlib.use("Agg")  # figures are only saved to files; set before pyplot is imported
 
 from ie692_rl.experiment import (
+    SELECTION_KEYS,
     Job,
     MethodSpec,
     Row,
@@ -47,6 +50,7 @@ from ie692_rl.experiment import (
     params_of,
     problem_budget,
     read_csv,
+    selection_of,
     summarize,
     tuning_jobs,
     tuning_rows,
@@ -71,6 +75,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--plot-only", action="store_true", help="only redraw the figures from the saved CSVs"
     )
+    parser.add_argument(
+        "--selection",
+        choices=sorted(SELECTION_KEYS),
+        help="how to pick each method's combination (default: [tuning] selection)",
+    )
     parser.add_argument("--workers", type=int, default=default_workers())
     parser.add_argument("--output", type=Path, default=ROOT / "results" / "tuned")
     return parser.parse_args(argv)
@@ -85,10 +94,13 @@ def main(argv: list[str] | None = None) -> list[Row]:
     all_methods = names(tuning["methods"])
     methods = args.methods or all_methods
     budgets = {p: problem_budget(config, p) for p in problems}
+    selection = args.selection or selection_of(config)
     args.output.mkdir(parents=True, exist_ok=True)
 
     if args.plot_only:
-        plot_tuning(list(read_csv(args.output / "tuning.csv")), all_methods, args.output / "tuning.png")
+        plot_tuning(
+            list(read_csv(args.output / "tuning.csv")), all_methods, args.output / "tuning.png", selection
+        )
         if (args.output / "history.csv").exists():
             plot_learning_curves(
                 list(read_csv(args.output / "history.csv")),
@@ -111,15 +123,15 @@ def main(argv: list[str] | None = None) -> list[Row]:
         config_path, specs, budgets, float(tuning["tune_fraction"]), int_list(tuning["tuning_seeds"]), args
     )
     write_csv(args.output / "tuning.csv", tuned)
-    plot_tuning(tuned, all_methods, args.output / "tuning.png")
-    report_choices(specs, tuned)
+    plot_tuning(tuned, all_methods, args.output / "tuning.png", selection)
+    report_choices(specs, tuned, selection)
     if args.tune_only:
         return []
 
     started = time.perf_counter()
     jobs = [
         Job(config_path, problem, method, params_of(spec, row), seed, budgets[problem])
-        for (problem, method), row in best_per_method(tuned).items()
+        for (problem, method), row in best_per_method(tuned, selection).items()
         for spec in [specs[problem, method]]
         for seed in int_list(tuning["test_seeds"])
     ]
@@ -170,27 +182,32 @@ def tune(
     return [row for spec, problem, budget in plan for row in tuning_rows(spec, problem, budget, results)]
 
 
-def report_choices(specs: dict[tuple[str, str], MethodSpec], rows: list[Row]) -> None:
-    best = best_per_method(rows)
+def report_choices(specs: dict[tuple[str, str], MethodSpec], rows: list[Row], selection: str) -> None:
+    print(f"selection: {selection}")
+    best = best_per_method(rows, selection)
     for problem, method in specs:
         if (problem, method) in best:
             b = best[problem, method]
             chosen = ", ".join(f"{k} = {b[k]}" for k in b if "." in k)
             print(
                 f"{problem:12s} {method:22s} {chosen}: "
-                f"gap {b['mean_final_gap']:.4f} (>= {b['min_updates']} updates)"
+                f"gap lower bound {b['mean_gap_lower']:.4f}, exact gap {b['mean_final_gap']:.4f} "
+                f"(>= {b['min_updates']} updates)"
             )
         else:
             print(f"{problem:12s} {method:22s} no combination completed an update in the tuning budget")
 
 
 def print_summary(summary: list[Row]) -> None:
-    print(f"\n{'problem':12s} {'method':22s} {'final gap':>17s} {'vs baseline':>12s} {'z':>6s}  verdict")
+    print(
+        f"\n{'problem':12s} {'method':22s} {'exact final gap':>17s} {'lower bd':>9s} {'vs baseline':>12s} "
+        f"{'z':>6s}  verdict"
+    )
     for r in summary:
         versus = "" if r["verdict"] == "" else f"{r['diff_vs_baseline']:+12.4f} {r['z']:+6.1f}"
         print(
             f"{r['problem']:12s} {r['method']:22s} {r['mean_final_gap']:8.4f} ± {r['standard_error']:.4f} "
-            f"{versus:>19s}  {r['verdict']}"
+            f"{r['mean_final_gap_lower']:9.4f} {versus:>19s}  {r['verdict']}"
         )
 
 

@@ -31,7 +31,7 @@ import numpy as np
 from ie692_rl.core import TOMC, BudgetExhaustedError, ExactScorer, uniform_policy
 from ie692_rl.enhancements.true_online_td import TrueOnlineTD
 from ie692_rl.envs import Blackjack, Environment, GridWorld, RetailInventory
-from ie692_rl.experiment import is_available, load_config, method_spec, names, problem_budget
+from ie692_rl.experiment import is_available, load_config, make_certifier, method_spec, names, problem_budget
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
@@ -78,6 +78,7 @@ class Rates(NamedTuple):
     td: float
     scoring: float  # seconds per exact score (done after every update)
     tomc_estimate: float  # steps in one TOMC estimate under the uniform policy (inf if it never finishes)
+    certify: float  # seconds per certificate of a run's final policy (validation rollouts)
 
 
 def tomc_estimate_length(env: Environment, cap: int = 50_000_000) -> float:
@@ -95,8 +96,9 @@ def section_throughput(envs: dict[str, Environment]) -> tuple[list[str], dict[st
     lines = [
         "## Kernel throughput (one core, compilation excluded)",
         "",
-        "| problem | states | TOMC steps/s | True Online TD steps/s | exact scoring of one policy |",
-        "|---|---|---|---|---|",
+        "| problem | states | TOMC steps/s | True Online TD steps/s | exact scoring of one policy "
+        "| certificate of one policy |",
+        "|---|---|---|---|---|---|",
     ]
     rates = {}
     for name, env in envs.items():
@@ -108,9 +110,15 @@ def section_throughput(envs: dict[str, Environment]) -> tuple[list[str], dict[st
         started = time.perf_counter()
         scorer.score(policy)
         scoring = time.perf_counter() - started
-        rates[name] = Rates(tomc, td, scoring, tomc_estimate_length(env))
+        certifier = make_certifier(load_config(ROOT / "config.cfg"))
+        certifier.certify(env, policy, np.random.default_rng(0))  # warm-up (compiles the rollout kernels)
+        started = time.perf_counter()
+        certifier.certify(env, policy, np.random.default_rng(1))
+        certify = time.perf_counter() - started
+        rates[name] = Rates(tomc, td, scoring, tomc_estimate_length(env), certify)
         lines.append(
-            f"| {name} | {env.n_states} | {tomc / 1e6:.1f} M | {td / 1e6:.1f} M | {scoring * 1e3:.1f} ms |"
+            f"| {name} | {env.n_states} | {tomc / 1e6:.1f} M | {td / 1e6:.1f} M | {scoring * 1e3:.1f} ms "
+            f"| {certify:.2f} s |"
         )
     return lines, rates
 
@@ -118,7 +126,8 @@ def section_throughput(envs: dict[str, Environment]) -> tuple[list[str], dict[st
 def section_projection(
     config_path: Path, problems: list[str], methods: list[str], rates: dict[str, Rates], workers: int
 ) -> tuple[list[str], float]:
-    """Every run spends its budget: time = steps / rate + updates * exact-scoring time, over the workers.
+    """Every run spends its budget: time = steps / rate + updates * exact-scoring time + one
+    certificate of the final policy, over the workers.
 
     Updates per run are budget / steps-per-estimate (TOMC: one uniform-policy estimate; TD: n_steps).
     """
@@ -148,8 +157,9 @@ def section_projection(
                 sampling = steps / rate.td
             else:
                 per_estimate, sampling = rate.tomc_estimate, steps / rate.tomc
+            runs = combos * n_tune + n_test
             seconds = (
-                (sampling + steps / per_estimate * rate.scoring) / workers
+                (sampling + steps / per_estimate * rate.scoring + runs * rate.certify) / workers
                 if math.isfinite(per_estimate)
                 else math.inf
             )  # TOMC never finishes an estimate: no update is ever made

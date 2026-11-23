@@ -22,6 +22,7 @@ from ie692_rl.experiment import (
     int_list,
     is_available,
     load_config,
+    make_certifier,
     make_env,
     mean_and_se,
     method_spec,
@@ -30,6 +31,7 @@ from ie692_rl.experiment import (
     parse_value,
     problem_budget,
     read_csv,
+    selection_of,
     summarize,
     write_csv,
     z_verdict,
@@ -303,9 +305,71 @@ def test_best_per_method_skips_ineligible_rows() -> None:
         {"problem": "P", "method": "m", "min_updates": 3, "mean_final_gap": 0.2},
         {"problem": "P", "method": "z", "min_updates": 0, "mean_final_gap": 0.1},
     ]
-    best = best_per_method(rows)
+    best = best_per_method(rows, "exact_gap")
     assert best["P", "m"]["mean_final_gap"] == 0.2
     assert ("P", "z") not in best
+
+
+def test_gap_lower_selection_is_model_free_with_upper_bound_tie_break() -> None:
+    rows = [
+        {
+            "problem": "P",
+            "method": "m",
+            "min_updates": 2,
+            "mean_final_gap": 0.0,
+            "mean_gap_lower": 0.3,
+            "mean_gap_upper": 5.0,
+        },
+        {
+            "problem": "P",
+            "method": "m",
+            "min_updates": 2,
+            "mean_final_gap": 0.9,
+            "mean_gap_lower": 0.1,
+            "mean_gap_upper": 9.0,
+        },
+        {
+            "problem": "P",
+            "method": "m",
+            "min_updates": 2,
+            "mean_final_gap": 0.5,
+            "mean_gap_lower": 0.1,
+            "mean_gap_upper": 4.0,
+        },
+        {
+            "problem": "P",
+            "method": "m",
+            "min_updates": 0,
+            "mean_final_gap": 0.0,
+            "mean_gap_lower": 0.0,
+            "mean_gap_upper": 0.0,
+        },
+        {
+            "problem": "P",
+            "method": "m",
+            "min_updates": 2,
+            "mean_final_gap": 0.0,
+            "mean_gap_lower": math.nan,
+            "mean_gap_upper": 0.0,
+        },
+    ]
+    chosen = best_per_method(rows, "gap_lower")["P", "m"]
+    assert (chosen["mean_gap_lower"], chosen["mean_gap_upper"]) == (0.1, 4.0)  # exact gap is ignored
+    assert best_per_method(rows, "exact_gap")["P", "m"]["mean_final_gap"] == 0.0
+    with pytest.raises(ValueError, match="selection"):
+        best_per_method(rows, "fastest")
+
+
+def test_selection_and_certifier_settings(tmp_path: Path) -> None:
+    assert selection_of(CONFIG) == "gap_lower"
+    certifier = make_certifier(CONFIG)
+    assert (certifier.n_rollouts, certifier.n_start_rollouts, certifier.z) == (20, 2000, 3.0)
+    bad = load_config(write_config(tmp_path, TINY_CONFIG.replace("[tuning]", "[tuning]\nselection = luck")))
+    with pytest.raises(ValueError, match="selection"):
+        selection_of(bad)
+    defaults = load_config(write_config(tmp_path, TINY_CONFIG))
+    assert selection_of(defaults) == "gap_lower"
+    assert make_certifier(defaults) == certifier
 
 
 def test_gap_curve_is_a_step_function() -> None:
@@ -343,7 +407,13 @@ def test_tune_end_to_end(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
     assert all(r["tuning_budget"] == 3000 for r in tuning_rows)
     assert {r["method"] for r in summary} == {"baseline", "td", "euclid"}
     assert all(r["seeds"] == 3 for r in summary)
+    assert all(0 <= r["mean_gap_lower"] <= r["mean_gap_upper"] for r in tuning_rows)
+    assert all(r["mean_final_gap_lower"] <= r["mean_final_gap"] + 1e-9 for r in summary)
     history_rows = list(read_csv(out / "history.csv"))
+    finals = {(r["method"], r["seed"]): r for r in history_rows}  # last row per run
+    assert all(
+        r["gap_lower"] <= r["gap"] + 1e-9 and r["validation_observations"] > 0 for r in finals.values()
+    )
     assert max(r["cumulative_observations"] for r in history_rows) <= problem_budget(
         load_config(config), "Blackjack"
     )
@@ -355,6 +425,26 @@ def test_tune_end_to_end(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
     )
     tune.main(["--config", str(config), "--output", str(out), "--plot-only"])
     assert (out / "tuning.png").exists()
+
+
+def test_selection_can_be_overridden(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    config = write_config(tmp_path)
+    tune.main(
+        [
+            "--config",
+            str(config),
+            "--output",
+            str(tmp_path / "o"),
+            "--workers",
+            "1",
+            "--methods",
+            "baseline",
+            "--tune-only",
+            "--selection",
+            "exact_gap",
+        ]
+    )
+    assert "selection: exact_gap" in capsys.readouterr().out
 
 
 def test_tune_in_parallel_matches_serial(tmp_path: Path) -> None:

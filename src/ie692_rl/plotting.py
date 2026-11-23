@@ -36,13 +36,22 @@ def _style(ax: Any, title: str, xlabel: str, ylabel: str) -> None:
     ax.set_ylabel(ylabel, fontsize=9, color=INK_SECONDARY)
 
 
-def plot_tuning(rows: Sequence[Row], methods: Sequence[str], path: Path) -> None:
-    """One panel per problem: every combination's mean tuning gap (+-1 SE), one column per method.
+TUNING_METRICS = {  # selection -> (value column, standard-error column, axis label)
+    "gap_lower": ("mean_gap_lower", "gap_lower_standard_error", "mean certified lower bound on the gap"),
+    "exact_gap": ("mean_final_gap", "standard_error", "mean final gap to optimal"),
+}
+
+
+def plot_tuning(
+    rows: Sequence[Row], methods: Sequence[str], path: Path, selection: str = "gap_lower"
+) -> None:
+    """One panel per problem: every combination's selection metric (+-1 SE), one column per method.
 
     The chosen combination is ringed; hollow markers made no update in the tuning budget.
     """
+    value_key, se_key, label = TUNING_METRICS[selection]
     problems = list(dict.fromkeys(r["problem"] for r in rows))
-    colors, chosen = method_colors(methods), best_per_method(rows)
+    colors, chosen = method_colors(methods), best_per_method(rows, selection)
     fig, axes = plt.subplots(
         1,
         len(problems),
@@ -58,10 +67,10 @@ def plot_tuning(rows: Sequence[Row], methods: Sequence[str], path: Path) -> None
             offsets = np.linspace(-0.25, 0.25, len(points)) if len(points) > 1 else np.zeros(1)
             for dx, r in zip(offsets, points, strict=True):
                 hollow = r["min_updates"] == 0
-                se = r.get("standard_error", np.nan)
+                se = r.get(se_key, np.nan)
                 ax.errorbar(
                     x + dx,
-                    r["mean_final_gap"],
+                    r[value_key],
                     yerr=se if np.isfinite(se) else None,
                     fmt="o",
                     markersize=6,
@@ -74,7 +83,7 @@ def plot_tuning(rows: Sequence[Row], methods: Sequence[str], path: Path) -> None
                 if chosen.get((problem, method)) is r:
                     ax.plot(
                         x + dx,
-                        r["mean_final_gap"],
+                        r[value_key],
                         "o",
                         markersize=15,
                         fillstyle="none",
@@ -84,7 +93,7 @@ def plot_tuning(rows: Sequence[Row], methods: Sequence[str], path: Path) -> None
                     )
         ax.set_xticks(range(len(present)), present, rotation=20, ha="right")
         budget = next(r["tuning_budget"] for r in rows if r["problem"] == problem)
-        _style(ax, f"{problem}: tuning budget {budget:,} steps", "", "mean final gap to optimal")
+        _style(ax, f"{problem}: tuning budget {budget:,} steps", "", label)
         ax.set_ylim(bottom=0)
     fig.suptitle(
         "Grid search: each dot is one combination (ring = chosen, hollow = no update)", fontsize=11, color=INK

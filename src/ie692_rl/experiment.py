@@ -35,6 +35,7 @@ import numpy as np
 from ie692_rl.core.divergence import BregmanDivergence
 from ie692_rl.core.estimator import QEstimator
 from ie692_rl.core.exact import ExactScorer
+from ie692_rl.core.optimality import RolloutCertifier
 from ie692_rl.core.policy import uniform_policy
 from ie692_rl.core.spmd import Schedule, run_spmd
 from ie692_rl.core.tomc import TOMC
@@ -160,6 +161,34 @@ def problem_budget(config: configparser.ConfigParser, problem: str) -> int:
     return int(config[f"problem {problem}"]["budget"])
 
 
+# ----------------------------------------------------------------------------- selection
+
+
+SELECTION_KEYS = {
+    # model-free (default): smallest lower confidence bound on the gap, ties broken by the upper bound
+    "gap_lower": ("mean_gap_lower", "mean_gap_upper"),
+    # uses the exact model: smallest exact gap to the optimum
+    "exact_gap": ("mean_final_gap",),
+}
+
+
+def selection_of(config: configparser.ConfigParser) -> str:
+    selection = config["tuning"].get("selection", "gap_lower")
+    if selection not in SELECTION_KEYS:
+        raise ValueError(f"[tuning] selection must be one of {sorted(SELECTION_KEYS)}, got {selection!r}")
+    return selection
+
+
+def make_certifier(config: configparser.ConfigParser) -> RolloutCertifier:
+    """The optimality certifier applied to every run's final policy ([tuning] certifier_* settings)."""
+    tuning = config["tuning"]
+    return RolloutCertifier(
+        n_rollouts=int(tuning.get("certifier_rollouts", "20")),
+        n_start_rollouts=int(tuning.get("certifier_start_rollouts", "2000")),
+        z=float(tuning.get("certifier_z", "3.0")),
+    )
+
+
 # ----------------------------------------------------------------------------- building a method
 
 
@@ -232,6 +261,7 @@ def run_job(job: Job) -> tuple[Job, list[Row]]:
         job.seed,
         tau=method.tau,
         scorer=scorer,
+        certifier=make_certifier(config),
     )
     base = {"problem": job.problem, "method": job.method, **dict(job.params), "seed": job.seed}
     return job, [{**base, **record.as_dict()} for record in result.history]
@@ -273,7 +303,8 @@ def tuning_jobs(
 
 
 def tuning_rows(spec: MethodSpec, problem: str, budget: int, results: dict[Job, list[Row]]) -> list[Row]:
-    """One row per combination: mean final gap over the tuning seeds and the fewest updates made."""
+    """One row per combination: mean final exact gap and certified gap bounds over the tuning seeds,
+    and the fewest updates made."""
     by_params: dict[Params, list[list[Row]]] = {}
     for job, history in results.items():
         if job.problem == problem and job.method == spec.name:
@@ -282,6 +313,8 @@ def tuning_rows(spec: MethodSpec, problem: str, budget: int, results: dict[Job, 
     for params in spec.combinations():
         histories = by_params.get(params, [])
         mean, se = mean_and_se([h[-1]["gap"] for h in histories])
+        lower, lower_se = mean_and_se([h[-1]["gap_lower"] for h in histories])
+        upper, _ = mean_and_se([h[-1]["gap_upper"] for h in histories])
         updates = min((sum(r["status"] == "updated" for r in h) for h in histories), default=0)
         rows.append(
             {
@@ -293,18 +326,29 @@ def tuning_rows(spec: MethodSpec, problem: str, budget: int, results: dict[Job, 
                 "min_updates": updates,
                 "mean_final_gap": mean,
                 "standard_error": se,
+                "mean_gap_lower": lower,
+                "gap_lower_standard_error": lower_se,
+                "mean_gap_upper": upper,
             }
         )
     return rows
 
 
-def best_per_method(rows: Iterable[Row]) -> dict[tuple[str, str], Row]:
-    """Chosen combination per (problem, method): lowest mean gap among those where every seed updated."""
+def best_per_method(rows: Iterable[Row], selection: str = "gap_lower") -> dict[tuple[str, str], Row]:
+    """Chosen combination per (problem, method), among those where every seed made an update.
+
+    ``gap_lower``: smallest mean certified lower bound on the gap (model-free), ties broken by the mean
+    upper bound; ``exact_gap``: smallest mean exact gap (needs the model).
+    """
+    if selection not in SELECTION_KEYS:
+        raise ValueError(f"selection must be one of {sorted(SELECTION_KEYS)}")
+    keys = SELECTION_KEYS[selection]
     best: dict[tuple[str, str], Row] = {}
     for row in rows:
         key = (row["problem"], row["method"])
-        eligible = row["min_updates"] > 0 and math.isfinite(row["mean_final_gap"])
-        if eligible and (key not in best or row["mean_final_gap"] < best[key]["mean_final_gap"]):
+        score = tuple(float(row.get(k, math.nan)) for k in keys)
+        eligible = row["min_updates"] > 0 and math.isfinite(score[0])
+        if eligible and (key not in best or score < tuple(float(best[key].get(k, math.nan)) for k in keys)):
             best[key] = row
     return best
 
@@ -331,8 +375,10 @@ def summarize(
 ) -> list[Row]:
     """Final exact gap per (problem, method) with a z-test against the baseline method."""
     finals: dict[tuple[str, str], dict[int, float]] = {}
+    lowers: dict[tuple[str, str], dict[int, float]] = {}
     for row in history_rows:  # rows are in iteration order, so the last row per seed is the final policy
         finals.setdefault((row["problem"], row["method"]), {})[row["seed"]] = row["gap"]
+        lowers.setdefault((row["problem"], row["method"]), {})[row["seed"]] = row.get("gap_lower", math.nan)
     summary = []
     for (problem, method), by_seed in finals.items():
         gaps = np.array(list(by_seed.values()))
@@ -354,6 +400,7 @@ def summarize(
                 "seeds": int(gaps.size),
                 "mean_final_gap": mean,
                 "standard_error": se,
+                "mean_final_gap_lower": float(np.mean(list(lowers[problem, method].values()))),
                 "diff_vs_baseline": diff,
                 "z": z,
                 "verdict": verdict,

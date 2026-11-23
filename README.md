@@ -29,7 +29,7 @@ kernels that take an environment as an argument are recompiled once in each proc
 ## Quick start
 
 ```bash
-python tune.py                          # tune every method, run it in full, write results/tuned/ (about 30 s)
+python tune.py                          # tune every method, run it in full, write results/tuned/ (about 50 s)
 python tune.py --problems Blackjack --tune-only
 python tune.py --plot-only              # redraw the figures from saved CSVs
 python benchmarks/bench.py --run        # performance and memory report -> results/benchmark.md
@@ -76,6 +76,7 @@ src/ie692_rl/
     divergence.py            BregmanDivergence abstract base class
     estimator.py             QEstimator abstract base class
     exact.py                 exact scoring on the sparse model (reporting and tests only)
+    optimality.py            model-free optimality certificate (advantage gap)
   enhancements/
     bregman_spmd/            enhancement 1: KL (the baseline step), Euclidean and Tsallis divergences
     true_online_td/          enhancement 2: True Online TD(λ) (+ TD(0), TD(λ)) as a Q estimator
@@ -162,14 +163,62 @@ regularized Q. `KL().step(..., tau)` applies the closed form
 converges to. Its estimated V(s₀) includes the (negative) entropy term, so it sits below the other
 methods' estimates in `learning_curves.png`; the exact gap is computed without regularization.
 
+## Model-free optimality certificate (`core/optimality.py`)
+
+The exact gap needs the model P. The **advantage gap** g(s) = V^π(s) − min_a Q^π(s, a) needs only
+Q^π. Since Q^π ≥ Q* and by the performance-difference lemma,
+
+  g(s₀) ≤ V^π(s₀) − V*(s₀) ≤ max_s g(s) / (1 − γ),
+
+and g = 0 everywhere exactly when π is optimal. The upper bound is loose (the 1/(1−γ) factor and
+the max over states).
+
+**A tighter lower bound** follows from the same gap. Let π′ be greedy for Q^π. By the
+performance-difference lemma, V^π(s₀) − V^{π′}(s₀) = E_{d^{π′}}[g]/(1−γ), which is at least g(s₀).
+And since V* ≤ V^{π′} for any π′, it is at most the true gap, even when π′ comes from a noisy Q̂.
+
+| Random policy | true gap | g(s₀) | V^π − V^greedy |
+|---|---|---|---|
+| GridWorld 10×10 | 0.36 | 0.02 | 0.31 |
+| Inventory | 6.1 | 0.49 | 5.7 |
+| Blackjack | 0.25 | 0.06 | 0.06 |
+
+The certifier's lower bound is the larger of the two estimated bounds.
+
+- `advantage_gap(q, policy)` computes g, and `gap_bounds(q, policy, gamma, start, q_se, z)` returns
+  both bounds from exact or estimated Q, with z-standard-error margins on the action differences.
+- `RolloutCertifier(n_rollouts, n_start_rollouts, z).certify(env, policy, rng)` estimates Q^π for
+  every (s, a): take a, then follow π, until γ^t < 1e-16. It uses the simulator only (no P), started
+  in arbitrary states, with many more rollouts at the start state, where the lower bound is read.
+  It then rolls out π and the greedy π′ from the start state for the improvement bound. Each z-level
+  margin is applied separately, and `lower = max(gap_lower, improvement_lower)`. A certificate takes
+  about 0.2 s on GridWorld and 0.8 s on 30×30.
+- `run_spmd(..., certifier=RolloutCertifier(), certify_every=k)` adds `gap_lower`, `gap_upper` and
+  `validation_observations` to the history. These run on their own random stream and are not
+  charged to the training budget, so training is unchanged.
+
+**Do not use TOMC's training Q̂ for this.** Actions with π < π_min are filled with 1/(1−γ), so a
+deterministic, locked-in policy looks optimal. In Blackjack, "draw below 7" has a true gap of 0.194,
+TOMC's Q̂ gives bounds [0, 0], and the rollout certifier reports a lower bound of 0.10. For the
+optimal thresholds it reports 0.
+
 ## Experiments and tuning protocol
 
 The protocol follows the handout. Each method grid-searches at most three parameters, three values
 each; `config.cfg` is validated so that more than three tuned parameters is an error. Every
-combination runs on 10% of the full observation budget with tuning seeds 100–102. The combination
-with the lowest mean exact gap is chosen, among those where every seed made at least one update. It
-then runs on the full budget with 20 test seeds (200–219), and is compared with the baseline by a
-two-sample z-test (|z| ≥ 2).
+combination runs on 10% of the full observation budget with tuning seeds 100–102.
+
+**Selection is model-free by default** (`[tuning] selection = gap_lower`). Every run's final policy
+is certified (`certifier_*` settings), and the combination with the smallest mean certified lower
+bound on the optimality gap is chosen, with ties broken by the mean upper bound. Only combinations
+where every seed made at least one update are eligible. `selection = exact_gap` (or
+`tune.py --selection exact_gap`) uses the exact gap instead, which needs the model.
+
+The chosen combination then runs on the full budget with 20 test seeds (200–219) and is compared with
+the baseline by a two-sample z-test on the exact final gap (|z| ≥ 2). `summary.csv` also reports the
+mean certified lower bound. For nearly converged policies the lower bound is loose: on GridWorld the
+chosen combinations certify 0.001–0.007 against exact gaps of about 0.075. It still ranked the
+divergences in the same order as the exact gap.
 
 | Method (`config.cfg`) | Estimator | Divergence | Tuned |
 |---|---|---|---|
@@ -220,7 +269,7 @@ Measured on an Apple M3 (8 cores) with 7 workers; see `results/benchmark.md`, re
 `python benchmarks/bench.py --run`.
 
 - **Full pipeline:** the default `python tune.py` (GridWorld 10×10 and Blackjack, six methods,
-  648 tuning runs, 240 full runs) takes **about 28 s** end to end. The limit is 10 minutes, and the
+  648 tuning runs, 240 full runs, each final policy certified) takes **about 47 s** end to end. The limit is 10 minutes, and the
   previous pure-Python version needed about 2 hours for a smaller experiment.
 - **Throughput:** TOMC samples about 30M steps/s on GridWorld and True Online TD about 10M steps/s,
   roughly 100× the pure-Python loops.
