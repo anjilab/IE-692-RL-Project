@@ -2,29 +2,32 @@
 
 exact_model(env) returns P (S, A, S) and expected one-step cost c (S, A). Rows of P
 sum to less than 1 where an episode can end. The team's GridWorld and blackjack get
-models built here from the rules in baseline.py and baseline_blackjack.py; other
+models built here from the rules in grid_world_env.py and blackjack_env.py; other
 environments may provide their own exact_model() method.
 """
 import numpy as np
 
-from baseline import GridWorld
-from baseline_blackjack import Blackjack
+from blackjack_env import Blackjack
+from grid_world_env import GridWorld
 
 
 def gridworld_model(env):
     S, C = env.n_states, env.cols
+    # env.p: probability of the intended move; from a goal or hazard the agent moves with
+    # probability env.q and is otherwise sent back to the start.
+    reset = 1 - env.q
     P, c = np.zeros((S, 4, S)), np.zeros((S, 4))
     for s in range(S):
         special = s in env.goals or s in env.hazards
         c[s] = 0.0 if s in env.goals else 1.0 if s in env.hazards else 0.2
         for a in range(4):
             for actual, (dr, dc) in enumerate([(-1, 0), (1, 0), (0, -1), (0, 1)]):
-                prob = env.intended_probability if actual == a else (1 - env.intended_probability) / 3
+                prob = env.p if actual == a else (1 - env.p) / 3
                 row = min(max(s // C + dr, 0), env.rows - 1)
                 col = min(max(s % C + dc, 0), env.cols - 1)
-                P[s, a, row * C + col] += prob * ((1 - env.reset_probability) if special else 1.0)
+                P[s, a, row * C + col] += prob * ((1 - reset) if special else 1.0)
             if special:
-                P[s, a, env.start] += env.reset_probability
+                P[s, a, env.start] += reset
     return P, c
 
 
