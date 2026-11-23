@@ -23,7 +23,7 @@ The accumulated-operator method keeps all past error contributions without trace
 
 import math
 from dataclasses import dataclass
-from typing import Any, Literal, NamedTuple
+from typing import Any, ClassVar, Literal, NamedTuple
 
 import numpy as np
 
@@ -252,8 +252,10 @@ def run_td(
 
 
 @dataclass(frozen=True)
-class TrueOnlineTD(QEstimator):
-    """True Online TD(lambda) as SPMD's Q estimator: ``n_steps`` fresh on-policy transitions per call."""
+class _TDEstimator(QEstimator):
+    """Shared adapter: fresh TD parameters and ``n_steps`` on-policy transitions per SPMD call."""
+
+    _mode: ClassVar[int]
 
     eta: float = 0.05
     lam: float = 0.8
@@ -286,13 +288,47 @@ class TrueOnlineTD(QEstimator):
             self.eta,
             self.lam,
             rng,
-            TRUE_ONLINE,
+            self._mode,
             record_every=0,
             extra_cost=extra_cost,
             q_init=self.q_init,
             trace_cutoff=self.trace_cutoff,
         )
         return Estimate(result.q, result.observations, result.states_visited)
+
+
+@dataclass(frozen=True)
+class TrueOnlineTD(_TDEstimator):
+    """True Online TD(lambda) with Dutch traces as SPMD's Q estimator."""
+
+    _mode: ClassVar[int] = TRUE_ONLINE
+
+
+@dataclass(frozen=True)
+class TDZero(_TDEstimator):
+    """TD(0) as SPMD's Q estimator; lambda is fixed at zero."""
+
+    lam: float = 0.0
+    _mode: ClassVar[int] = ACCUMULATING
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.lam != 0.0:
+            raise ValueError("TDZero requires lam = 0")
+
+
+@dataclass(frozen=True)
+class TDLambda(_TDEstimator):
+    """Accumulated TD operators (``td_lambda``), with lambda decay, as SPMD's Q estimator."""
+
+    _mode: ClassVar[int] = ACCUMULATED_OPERATOR
+
+
+@dataclass(frozen=True)
+class SarsaLambda(_TDEstimator):
+    """SARSA(lambda) with an accumulating trace (``td_lambda_sarsa``) as SPMD's Q estimator."""
+
+    _mode: ClassVar[int] = ACCUMULATING
 
 
 @njit_generic

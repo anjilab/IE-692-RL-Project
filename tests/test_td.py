@@ -12,7 +12,10 @@ from ie692_rl.core import BudgetExhaustedError, run_spmd, uniform_policy
 from ie692_rl.enhancements.bregman_spmd import KL
 from ie692_rl.enhancements.true_online_td import (
     FeatureMap,
+    SarsaLambda,
+    TDLambda,
     TDResult,
+    TDZero,
     TrueOnlineTD,
     estimated_state_value,
     linear_features,
@@ -296,6 +299,37 @@ def test_estimator_budget_and_observations() -> None:
     assert estimate.q.shape == (32, 2)
     with pytest.raises(BudgetExhaustedError):
         estimator.estimate(env, uniform_policy(32, 2), np.random.default_rng(0), 499)
+
+
+@pytest.mark.parametrize(("estimator_cls", "mode", "lam"), [
+    (TDZero, ACCUMULATING, 0.0),
+    (TDLambda, ACCUMULATED_OPERATOR, 0.8),
+    (SarsaLambda, ACCUMULATING, 0.8),
+    (TrueOnlineTD, TRUE_ONLINE, 0.8),
+])
+@pytest.mark.parametrize("name", ["blackjack", "gridworld10"])
+def test_spmd_adapters_preserve_td_updates(
+    estimator_cls: type[TDZero | TDLambda | SarsaLambda | TrueOnlineTD], mode: int, lam: float, name: str
+) -> None:
+    env = get_env(name)
+    policy = random_policy(env, 11, floor=0.3)
+    extra = np.full(env.n_states, -0.1)
+    estimator = estimator_cls(eta=0.05, lam=lam, n_steps=500, q_init=0.3)
+    actual = estimator.estimate(env, policy, np.random.default_rng(9), 600, extra)
+    expected = run_td(
+        env, policy, tabular_features(env), 500, 0.05, lam, np.random.default_rng(9), mode,
+        record_every=0, extra_cost=extra, q_init=0.3,
+    )
+    np.testing.assert_array_equal(actual.q, expected.q)
+    assert actual.observations == expected.observations == 500
+    assert actual.states_visited == expected.states_visited
+    with pytest.raises(BudgetExhaustedError):
+        estimator.estimate(env, policy, np.random.default_rng(9), 499)
+
+
+def test_td_zero_adapter_rejects_nonzero_lambda() -> None:
+    with pytest.raises(ValueError, match="lam = 0"):
+        TDZero(lam=0.8)
 
 
 @pytest.mark.parametrize("kwargs", [{"features": "cubic"}, {"n_steps": 0}])

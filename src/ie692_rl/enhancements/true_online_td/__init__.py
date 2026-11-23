@@ -2,7 +2,10 @@
 
 from ie692_rl.enhancements.true_online_td.features import FeatureMap, linear_features, tabular_features
 from ie692_rl.enhancements.true_online_td.td import (
+    SarsaLambda,
+    TDLambda,
     TDResult,
+    TDZero,
     TrueOnlineTD,
     estimated_state_value,
     td_lambda,
@@ -13,7 +16,10 @@ from ie692_rl.enhancements.true_online_td.td import (
 
 __all__ = [
     "FeatureMap",
+    "SarsaLambda",
+    "TDLambda",
     "TDResult",
+    "TDZero",
     "TrueOnlineTD",
     "estimated_state_value",
     "linear_features",

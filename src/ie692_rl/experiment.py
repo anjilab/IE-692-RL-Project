@@ -41,7 +41,7 @@ from ie692_rl.core.spmd import Schedule, run_spmd
 from ie692_rl.core.tomc import TOMC
 from ie692_rl.enhancements.bregman_spmd import KL, Euclidean, Tsallis
 from ie692_rl.enhancements.entropy_reg_spmd import AnnealedTau
-from ie692_rl.enhancements.true_online_td import TrueOnlineTD
+from ie692_rl.enhancements.true_online_td import SarsaLambda, TDLambda, TDZero, TrueOnlineTD
 from ie692_rl.envs import Blackjack, Environment, GridWorld, RetailInventory
 from ie692_rl.types import FloatArray
 
@@ -54,7 +54,13 @@ ENVIRONMENTS: dict[str, Any] = {
     "blackjack": Blackjack,
     "inventory": RetailInventory.from_m5,
 }
-ESTIMATORS: dict[str, type[QEstimator]] = {"tomc": TOMC, "true_online_td": TrueOnlineTD}
+ESTIMATORS: dict[str, type[QEstimator]] = {
+    "tomc": TOMC,
+    "true_online_td": TrueOnlineTD,
+    "td_zero": TDZero,
+    "td_lambda": TDLambda,
+    "sarsa_lambda": SarsaLambda,
+}
 DIVERGENCES: dict[str, type[BregmanDivergence]] = {"kl": KL, "euclidean": Euclidean, "tsallis": Tsallis}
 SPMD_KEYS = ("step_size", "tau", "tau_power")
 PROBLEM_KEYS = ("environment", "budget", "label")
