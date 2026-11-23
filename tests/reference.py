@@ -64,20 +64,28 @@ def reference_td(
     lam: float,
     rng: np.random.Generator,
     mode: str,
+    *,
+    evaluation_state: int | None = None,
+    value_history: FloatArray | None = None,
+    q_history: list[tuple[int, FloatArray]] | None = None,
+    record_every: int = 0,
 ) -> FloatArray:
-    """The original td.py loops (mode: 'td0', 'td_lambda' or 'true_online') with dense features."""
+    """Original dense TD loops, including the local accumulated-operator method."""
     S, A = env.n_states, env.n_actions
     cdf = policy_cdf(pi)
     theta = np.zeros(Phi.shape[1])
     e = np.zeros_like(theta)
     q_old = 0.0
+    eval_state = env.start if evaluation_state is None else evaluation_state
+    if value_history is not None:
+        value_history[0] = 0.0
 
     def start() -> tuple[int, int]:
         s = env.reset(rng)
         return s, int(sample_action(cdf[s], pi[s], rng))
 
     s, a = start()
-    for _ in range(n_steps):
+    for t in range(n_steps):
         next_s, cost, done = env.step_one(s, a, rng)
         phi = Phi[s * A + a]
         if done:
@@ -92,12 +100,22 @@ def reference_td(
             delta = cost + env.gamma * (phi_next @ theta) - (phi @ theta)
             e = env.gamma * lam * e + phi
             theta += eta * delta * e
+        elif mode == "accumulated_operator":
+            delta = cost + env.gamma * (phi_next @ theta) - (phi @ theta)
+            tilde_F = -delta * phi
+            e = lam * e + tilde_F
+            theta = theta - eta * e
         else:
             q, q_next = phi @ theta, phi_next @ theta
             delta = cost + env.gamma * q_next - q
             e = env.gamma * lam * e + (1 - eta * env.gamma * lam * (e @ phi)) * phi
             theta += eta * (delta + q - q_old) * e - eta * (q - q_old) * phi
             q_old = q_next
+        if value_history is not None:
+            state_features = Phi[eval_state * A:(eval_state + 1) * A]
+            value_history[t + 1] = (pi[eval_state] @ state_features) @ theta
+        if q_history is not None and record_every and (t + 1) % record_every == 0:
+            q_history.append((t + 1, (Phi @ theta).reshape(S, A).copy()))
         if done:
             e.fill(0)
             q_old = 0.0

@@ -25,3 +25,8 @@ src/ie692_rl/envs/data/m5_raw/
 dist/
 build/
 .ipynb_checkpoints/
+policy_evaluation_results/
+policy_evaluation_results_200k/
+
+qa_prep.md
+results_notebook/

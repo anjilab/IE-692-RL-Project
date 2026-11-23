@@ -2,6 +2,7 @@
 implementation, convergence to the exact Q, history, and the SPMD estimator wrapper."""
 
 import math
+from collections.abc import Callable
 
 import numpy as np
 import pytest
@@ -10,15 +11,25 @@ from conftest import get_env, get_scorer, random_policy
 from ie692_rl.core import BudgetExhaustedError, run_spmd, uniform_policy
 from ie692_rl.enhancements.bregman_spmd import KL
 from ie692_rl.enhancements.true_online_td import (
+    FeatureMap,
+    TDResult,
     TrueOnlineTD,
+    estimated_state_value,
     linear_features,
     tabular_features,
     td_lambda,
+    td_lambda_sarsa,
     td_zero,
     true_online_td_lambda,
 )
-from ie692_rl.enhancements.true_online_td.td import ACCUMULATING, TRUE_ONLINE, run_td
-from ie692_rl.envs import Blackjack, GridWorld
+from ie692_rl.enhancements.true_online_td.td import (
+    ACCUMULATED_OPERATOR,
+    ACCUMULATING,
+    TRUE_ONLINE,
+    run_td,
+)
+from ie692_rl.envs import Blackjack, Environment, GridWorld
+from ie692_rl.types import FloatArray
 from reference import reference_td
 
 # ----------------------------------------------------------------------------- features
@@ -65,7 +76,12 @@ def test_no_aggregation_for_inventory() -> None:
 # ----------------------------------------------------------------------------- exactness
 
 
-MODES = [("td0", ACCUMULATING, 0.0), ("td_lambda", ACCUMULATING, 0.8), ("true_online", TRUE_ONLINE, 0.8)]
+MODES = [
+    ("td0", ACCUMULATING, 0.0),
+    ("td_lambda", ACCUMULATING, 0.8),
+    ("accumulated_operator", ACCUMULATED_OPERATOR, 0.8),
+    ("true_online", TRUE_ONLINE, 0.8),
+]
 
 
 @pytest.mark.parametrize(("mode_name", "mode", "lam"), MODES)
@@ -93,9 +109,80 @@ def test_lambda_zero_reduces_to_td0() -> None:
     features, policy = tabular_features(env), uniform_policy(100, 4)
     td0 = td_zero(env, policy, features, 5000, 0.1, np.random.default_rng(0))
     accumulating = td_lambda(env, policy, features, 5000, 0.1, 0.0, np.random.default_rng(0))
+    sarsa = td_lambda_sarsa(env, policy, features, 5000, 0.1, 0.0, np.random.default_rng(0))
     true_online = true_online_td_lambda(env, policy, features, 5000, 0.1, 0.0, np.random.default_rng(0))
     np.testing.assert_allclose(accumulating.q, td0.q, atol=1e-12)
+    np.testing.assert_allclose(sarsa.q, td0.q, atol=1e-12)
     np.testing.assert_allclose(true_online.q, td0.q, atol=1e-12)
+
+
+@pytest.mark.parametrize("name", ["blackjack", "gridworld10"])
+@pytest.mark.parametrize("feature_fn", [tabular_features, linear_features])
+@pytest.mark.parametrize(
+    ("method", "mode"),
+    [
+        (td_zero, "td0"),
+        (td_lambda, "accumulated_operator"),
+        (td_lambda_sarsa, "td_lambda"),
+        (true_online_td_lambda, "true_online"),
+    ],
+)
+def test_local_methods_preserve_every_value_and_q_checkpoint(
+    name: str,
+    feature_fn: Callable[[Environment], FeatureMap],
+    method: Callable[..., TDResult],
+    mode: str,
+) -> None:
+    env = get_env(name)
+    features, policy = feature_fn(env), random_policy(env, 17, floor=0.3)
+    # Exercise a state other than the default, and a final step between checkpoints.
+    state, n_steps, interval = env.n_states - 1, 137, 17
+    expected_values, values = np.empty(n_steps + 1), np.empty(n_steps + 1)
+    expected_history: list[tuple[int, FloatArray]] = []
+    history: list[tuple[int, FloatArray]] = []
+    expected = reference_td(
+        env, policy, features.dense(), n_steps, 0.05, 0.8, np.random.default_rng(9), mode,
+        evaluation_state=state, value_history=expected_values,
+        q_history=expected_history, record_every=interval,
+    )
+    kwargs = {} if method is td_zero else {"lam": 0.8}
+    result = method(
+        env, policy, features, n_steps, 0.05, rng=np.random.default_rng(9),
+        record_every=interval, evaluation_state=state, value_history=values,
+        q_history=history, **kwargs,
+    )
+    np.testing.assert_allclose(result.q, expected, rtol=0, atol=1e-10)
+    np.testing.assert_allclose(values, expected_values, rtol=0, atol=1e-10)
+    assert [step for step, _ in history] == [step for step, _ in expected_history]
+    for (_, q), (_, expected_q) in zip(history, expected_history, strict=True):
+        np.testing.assert_allclose(q, expected_q, rtol=0, atol=1e-10)
+    assert values[-1] == pytest.approx(estimated_state_value(result.q, policy, state))
+    np.testing.assert_allclose(result.history_values, values[result.history_steps], atol=1e-12)
+
+
+def test_accumulated_operator_is_distinct_from_sarsa() -> None:
+    env = get_env("gridworld10")
+    features, policy = tabular_features(env), uniform_policy(100, 4)
+    operator = td_lambda(env, policy, features, 1000, 0.05, 0.8, np.random.default_rng(9))
+    sarsa = td_lambda_sarsa(env, policy, features, 1000, 0.05, 0.8, np.random.default_rng(9))
+    assert not np.allclose(operator.q, sarsa.q)
+
+
+@pytest.mark.parametrize("n_steps", [0, 23])
+def test_per_update_values_without_q_checkpoints(n_steps: int) -> None:
+    env = get_env("blackjack")
+    policy = uniform_policy(env.n_states, env.n_actions)
+    values = np.full(n_steps + 1, np.nan)
+    history: list[tuple[int, FloatArray]] = []
+    result = td_lambda(
+        env, policy, tabular_features(env), n_steps, 0.05, 0.8, np.random.default_rng(9),
+        record_every=0, evaluation_state=env.start, value_history=values, q_history=history,
+    )
+    assert np.isfinite(values).all()
+    assert values[0] == 0.0
+    assert values[-1] == pytest.approx(estimated_state_value(result.q, policy, env.start))
+    assert history == []
+    assert result.history_values.size == 0
 
 
 @pytest.mark.parametrize("method", [td_zero, td_lambda, true_online_td_lambda])

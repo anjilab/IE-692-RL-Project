@@ -3,7 +3,8 @@
     Q_theta(s, a) = phi(s, a)^T theta,    delta_t = c_t + gamma * Q(s_{t+1}, a_{t+1}) - Q(s_t, a_t)
 
     TD(0)                   theta += eta * delta * phi
-    TD(lambda)              e = gamma lambda e + phi;                       theta += eta * delta * e
+    TD(lambda)              z = lambda z - delta phi;                       theta -= eta * z
+    SARSA(lambda)           e = gamma lambda e + phi;                       theta += eta * delta * e
     True Online TD(lambda)  e = gamma lambda e + (1 - eta gamma lambda e^T phi) phi           (Dutch trace)
                             theta += eta (delta + q - q_old) e - eta (q - q_old) phi
                             (van Seijen & Sutton, ICML 2014)
@@ -15,7 +16,9 @@ Speed and memory: the features are one-hot (``features.py``), and an accumulatin
 only has non-zero entries for features visited in the last ~log(cutoff)/log(gamma lambda) steps.
 The kernel keeps those entries in an active list and drops entries below ``trace_cutoff``, so a
 step costs O(active features) instead of O(d). With cutoff 0 it is exactly the dense algorithm.
-History stores only the estimated V(s0) every ``record_every`` steps (not full Q snapshots).
+History stores the estimated V(s0) every ``record_every`` steps. Optional ``value_history`` and
+``q_history`` buffers retain per-update state values and checkpoint Q snapshots for experiments.
+The accumulated-operator method keeps all past error contributions without trace pruning.
 """
 
 import math
@@ -31,8 +34,13 @@ from ie692_rl.enhancements.true_online_td.features import FEATURES, FeatureMap
 from ie692_rl.envs.base import Environment, ResetKernel, StepKernel
 from ie692_rl.types import FloatArray, IntArray
 
-ACCUMULATING, TRUE_ONLINE = 0, 1
+ACCUMULATING, TRUE_ONLINE, ACCUMULATED_OPERATOR = 0, 1, 2
 TRACE_CUTOFF = 1e-12
+
+
+def estimated_state_value(Q: FloatArray, pi: FloatArray, state: int) -> float:
+    """Return sum_a pi(a|state) Q(state,a); Q and pi have shape (S, A)."""
+    return float(pi[state] @ Q[state])
 
 
 class TDResult(NamedTuple):
@@ -51,9 +59,26 @@ def td_zero(
     eta: float,
     rng: np.random.Generator,
     record_every: int = 100,
+    *,
+    evaluation_state: int | None = None,
+    value_history: FloatArray | None = None,
+    q_history: list[tuple[int, FloatArray]] | None = None,
 ) -> TDResult:
     """Stochastic TD(0) (TD(lambda) with lambda = 0)."""
-    return run_td(env, pi, features, n_steps, eta, 0.0, rng, ACCUMULATING, record_every)
+    return run_td(
+        env,
+        pi,
+        features,
+        n_steps,
+        eta,
+        0.0,
+        rng,
+        ACCUMULATING,
+        record_every,
+        evaluation_state=evaluation_state,
+        value_history=value_history,
+        q_history=q_history,
+    )
 
 
 def td_lambda(
@@ -65,9 +90,62 @@ def td_lambda(
     lam: float,
     rng: np.random.Generator,
     record_every: int = 100,
+    *,
+    evaluation_state: int | None = None,
+    value_history: FloatArray | None = None,
+    q_history: list[tuple[int, FloatArray]] | None = None,
 ) -> TDResult:
-    """Conventional TD(lambda) with an accumulating eligibility trace."""
-    return run_td(env, pi, features, n_steps, eta, lam, rng, ACCUMULATING, record_every)
+    """Accumulate past TD errors times their features, with lambda decay.
+
+    Lecture 19: tilde_F = -delta * phi.
+    Lecture 20: z = lam * z + tilde_F; theta = theta - eta * z.
+    The operator sum resets at an episode boundary.
+    """
+    return run_td(
+        env,
+        pi,
+        features,
+        n_steps,
+        eta,
+        lam,
+        rng,
+        ACCUMULATED_OPERATOR,
+        record_every,
+        evaluation_state=evaluation_state,
+        value_history=value_history,
+        q_history=q_history,
+    )
+
+
+def td_lambda_sarsa(
+    env: Environment,
+    pi: FloatArray,
+    features: FeatureMap,
+    n_steps: int,
+    eta: float,
+    lam: float,
+    rng: np.random.Generator,
+    record_every: int = 100,
+    *,
+    evaluation_state: int | None = None,
+    value_history: FloatArray | None = None,
+    q_history: list[tuple[int, FloatArray]] | None = None,
+) -> TDResult:
+    """SARSA(lambda): apply the current TD error to accumulated features."""
+    return run_td(
+        env,
+        pi,
+        features,
+        n_steps,
+        eta,
+        lam,
+        rng,
+        ACCUMULATING,
+        record_every,
+        evaluation_state=evaluation_state,
+        value_history=value_history,
+        q_history=q_history,
+    )
 
 
 def true_online_td_lambda(
@@ -79,9 +157,26 @@ def true_online_td_lambda(
     lam: float,
     rng: np.random.Generator,
     record_every: int = 100,
+    *,
+    evaluation_state: int | None = None,
+    value_history: FloatArray | None = None,
+    q_history: list[tuple[int, FloatArray]] | None = None,
 ) -> TDResult:
     """True Online TD(lambda): Dutch trace plus the true-online correction."""
-    return run_td(env, pi, features, n_steps, eta, lam, rng, TRUE_ONLINE, record_every)
+    return run_td(
+        env,
+        pi,
+        features,
+        n_steps,
+        eta,
+        lam,
+        rng,
+        TRUE_ONLINE,
+        record_every,
+        evaluation_state=evaluation_state,
+        value_history=value_history,
+        q_history=q_history,
+    )
 
 
 def run_td(
@@ -97,6 +192,10 @@ def run_td(
     extra_cost: FloatArray | None = None,
     q_init: float = 0.0,
     trace_cutoff: float = TRACE_CUTOFF,
+    *,
+    evaluation_state: int | None = None,
+    value_history: FloatArray | None = None,
+    q_history: list[tuple[int, FloatArray]] | None = None,
 ) -> TDResult:
     """Validate the inputs and run the TD kernel."""
     check_policy(pi, env.n_states, env.n_actions)
@@ -106,6 +205,20 @@ def run_td(
         raise ValueError("n_steps and record_every must be non-negative")
     if not (math.isfinite(eta) and eta > 0 and 0 <= lam <= 1 and math.isfinite(q_init) and trace_cutoff >= 0):
         raise ValueError("Need eta > 0, 0 <= lam <= 1, a finite q_init and trace_cutoff >= 0")
+    if mode not in (ACCUMULATING, TRUE_ONLINE, ACCUMULATED_OPERATOR):
+        raise ValueError("Unknown TD mode")
+    if evaluation_state is not None and not 0 <= evaluation_state < env.n_states:
+        raise ValueError("Provide a valid evaluation_state")
+    if value_history is not None:
+        if evaluation_state is None:
+            raise ValueError("Provide a valid evaluation_state for value_history")
+        if value_history.shape != (n_steps + 1,) or not np.issubdtype(value_history.dtype, np.floating):
+            raise ValueError("value_history must be a floating-point array of length n_steps + 1")
+        value_history[0] = q_init
+    eval_state = env.start if evaluation_state is None else evaluation_state
+    per_update_values = np.empty(0) if value_history is None else value_history
+    n_snapshots = n_steps // record_every if q_history is not None and record_every > 0 else 0
+    parameter_history = np.empty((n_snapshots, features.n_features))
     extra = resolve_extra_cost(env, extra_cost)
     kernel = env.kernel
     theta, steps, values, visited = _td_kernel(
@@ -123,11 +236,18 @@ def run_td(
         extra,
         float(q_init),
         env.gamma,
-        env.start,
+        int(eval_state),
         int(record_every),
         float(trace_cutoff),
         rng,
+        per_update_values,
+        parameter_history,
     )
+    if q_history is not None:
+        q_history.extend(
+            (int(step), parameters[features.feature_of])
+            for step, parameters in zip(steps, parameter_history, strict=True)
+        )
     return TDResult(theta[features.feature_of], int(n_steps), steps, values, int(visited))
 
 
@@ -195,6 +315,8 @@ def _td_kernel(
     record_every: int,
     trace_cutoff: float,
     rng: np.random.Generator,
+    per_update_values: FloatArray,
+    parameter_history: FloatArray,
 ) -> tuple[FloatArray, IntArray, FloatArray, int]:
     n_states, n_actions = policy.shape
     theta = np.full(n_features, q_init)
@@ -206,7 +328,7 @@ def _td_kernel(
     n_records = n_steps // record_every if record_every > 0 else 0
     history_steps = np.empty(n_records, dtype=np.int64)
     history_values = np.empty(n_records)
-    decay = gamma * lam
+    decay = lam if mode == ACCUMULATED_OPERATOR else gamma * lam
     q_old = 0.0
 
     state = reset(params, rng)
@@ -230,7 +352,7 @@ def _td_kernel(
         while i < n_active:
             f = active[i]
             trace[f] *= decay
-            if abs(trace[f]) <= trace_cutoff and f != feature:
+            if mode != ACCUMULATED_OPERATOR and abs(trace[f]) <= trace_cutoff and f != feature:
                 trace[f] = 0.0
                 is_active[f] = False
                 n_active -= 1
@@ -245,6 +367,10 @@ def _td_kernel(
             trace[feature] += 1.0 - eta * decay * trace_at_feature
             scale, correction = eta * (delta + q - q_old), eta * (q - q_old)
             q_old = q_next
+        elif mode == ACCUMULATED_OPERATOR:
+            # z = lam * z + tilde_F, where tilde_F = -delta * phi.
+            trace[feature] -= delta
+            scale, correction = -eta, 0.0
         else:
             trace[feature] += 1.0
             scale, correction = eta * delta, 0.0
@@ -255,12 +381,19 @@ def _td_kernel(
                 update -= correction
             theta[f] += update
 
-        if record_every > 0 and (t + 1) % record_every == 0:
+        checkpoint = record_every > 0 and (t + 1) % record_every == 0
+        if per_update_values.size > 0 or checkpoint:
             value = 0.0
             for a in range(n_actions):
                 value += policy[eval_state, a] * theta[index[eval_state, a]]
-            history_steps[(t + 1) // record_every - 1] = t + 1
-            history_values[(t + 1) // record_every - 1] = value
+            if per_update_values.size > 0:
+                per_update_values[t + 1] = value
+            if checkpoint:
+                snapshot_index = (t + 1) // record_every - 1
+                history_steps[snapshot_index] = t + 1
+                history_values[snapshot_index] = value
+                if parameter_history.shape[0] > 0:
+                    parameter_history[snapshot_index] = theta
         if done:  # new Blackjack hand = new episode
             for i in range(n_active):
                 trace[active[i]] = 0.0
