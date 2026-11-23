@@ -22,8 +22,9 @@ Examples:
     python tune.py --reuse-tuning                    # full runs with the choices saved in tuning.csv
     python tune.py --plot-only                       # redraw the figures from the saved CSVs
 
-Writes to --output (default results/tuned/): tuning.csv, tuning.png, history.csv (every iteration of
-every full run), summary.csv (final gaps vs the baseline) and learning_curves.png.
+Writes to --output (default results/tuned/): tuning.csv, history.csv (every iteration of every full
+run), summary.csv (final gaps vs the baseline), and per problem tuning_<problem>.png and
+learning_curves_<problem>.png (display names from the ``label`` keys in config.cfg).
 """
 
 import argparse
@@ -45,10 +46,12 @@ from ie692_rl.experiment import (
     is_available,
     load_config,
     map_jobs,
+    method_label,
     method_spec,
     names,
     params_of,
     problem_budget,
+    problem_label,
     read_csv,
     selection_of,
     summarize,
@@ -93,20 +96,30 @@ def main(argv: list[str] | None = None) -> list[Row]:
     problems = args.problems or names(tuning["problems"])
     all_methods = names(tuning["methods"])
     methods = args.methods or all_methods
-    budgets = {p: problem_budget(config, p) for p in problems}
+    all_problems = [s.removeprefix("problem ") for s in config.sections() if s.startswith("problem ")]
+    budgets = {p: problem_budget(config, p) for p in all_problems}
+    labels = {m: method_label(config, m) for m in all_methods}
+    problem_labels = {p: problem_label(config, p) for p in all_problems}
     selection = args.selection or selection_of(config)
     args.output.mkdir(parents=True, exist_ok=True)
 
     if args.plot_only:
         plot_tuning(
-            list(read_csv(args.output / "tuning.csv")), all_methods, args.output / "tuning.png", selection
+            list(read_csv(args.output / "tuning.csv")),
+            all_methods,
+            labels,
+            problem_labels,
+            args.output,
+            selection,
         )
         if (args.output / "history.csv").exists():
             plot_learning_curves(
                 list(read_csv(args.output / "history.csv")),
                 budgets,
                 all_methods,
-                args.output / "learning_curves.png",
+                labels,
+                problem_labels,
+                args.output,
             )
         print(f"figures redrawn in {args.output}")
         return []
@@ -123,7 +136,7 @@ def main(argv: list[str] | None = None) -> list[Row]:
         config_path, specs, budgets, float(tuning["tune_fraction"]), int_list(tuning["tuning_seeds"]), args
     )
     write_csv(args.output / "tuning.csv", tuned)
-    plot_tuning(tuned, all_methods, args.output / "tuning.png", selection)
+    plot_tuning(tuned, all_methods, labels, problem_labels, args.output, selection)
     report_choices(specs, tuned, selection)
     if args.tune_only:
         return []
@@ -142,7 +155,7 @@ def main(argv: list[str] | None = None) -> list[Row]:
     ]
     print(f"full runs: {len(jobs)} jobs in {time.perf_counter() - started:.1f}s")
     write_csv(args.output / "history.csv", history)
-    plot_learning_curves(history, budgets, all_methods, args.output / "learning_curves.png")
+    plot_learning_curves(history, budgets, all_methods, labels, problem_labels, args.output)
     summary = summarize(
         history,
         tuning.get("baseline", "baseline"),

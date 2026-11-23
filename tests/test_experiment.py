@@ -25,11 +25,13 @@ from ie692_rl.experiment import (
     make_certifier,
     make_env,
     mean_and_se,
+    method_label,
     method_spec,
     names,
     parse_list,
     parse_value,
     problem_budget,
+    problem_label,
     read_csv,
     selection_of,
     summarize,
@@ -123,9 +125,6 @@ def test_repository_config_follows_the_handout() -> None:
     grid = make_env(CONFIG, "GridWorld")
     assert isinstance(grid, GridWorld)
     assert (grid.rows, len(grid.hazards), len(grid.goals), grid.gamma) == (10, 10, 3, 0.9)
-    big = make_env(CONFIG, "GridWorld30")
-    assert isinstance(big, GridWorld)
-    assert big.n_states == 900
     assert make_env(CONFIG, "Blackjack").gamma == 0.9
     assert 0.05 <= float(CONFIG["tuning"]["tune_fraction"]) <= 0.1  # guideline: 5-10% of the full budget
     assert CONFIG["tuning"]["baseline"] in names(CONFIG["tuning"]["methods"])
@@ -400,8 +399,15 @@ def test_tune_end_to_end(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
     config, out = write_config(tmp_path), tmp_path / "out"
     summary = tune.main(["--config", str(config), "--output", str(out), "--workers", "1"])
     assert "skipping" not in capsys.readouterr().out
-    for name in ("tuning.csv", "tuning.png", "history.csv", "summary.csv", "learning_curves.png"):
+    for name in (
+        "tuning.csv",
+        "history.csv",
+        "summary.csv",
+        "tuning_blackjack.png",
+        "learning_curves_blackjack.png",
+    ):
         assert (out / name).exists(), name
+    assert not (out / "tuning.png").exists()  # one figure per problem, no combined file
     tuning_rows = list(read_csv(out / "tuning.csv"))
     assert len(tuning_rows) == 5  # baseline: 2 step sizes; td: 2 lambdas; euclid: 1
     assert all(r["tuning_budget"] == 3000 for r in tuning_rows)
@@ -419,12 +425,64 @@ def test_tune_end_to_end(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
     )
 
     # Reusing the saved tuning and redrawing figures must not rerun the search.
-    (out / "tuning.png").unlink()
+    (out / "tuning_blackjack.png").unlink()
     tune.main(
         ["--config", str(config), "--output", str(out), "--workers", "1", "--reuse-tuning", "--tune-only"]
     )
     tune.main(["--config", str(config), "--output", str(out), "--plot-only"])
-    assert (out / "tuning.png").exists()
+    assert (out / "tuning_blackjack.png").exists()
+
+
+def test_labels_default_to_names_and_stay_out_of_parameters(tmp_path: Path) -> None:
+    assert method_label(CONFIG, "true_online_td") == r"True Online TD($\lambda$)"
+    assert problem_label(CONFIG, "GridWorld") == r"GridWorld ($10 \times 10$)"
+    assert "label" not in method_spec(CONFIG, "baseline", "GridWorld").grid  # not a tuned parameter
+    assert isinstance(make_env(CONFIG, "GridWorld"), GridWorld)  # not passed to the constructor
+    tiny = load_config(write_config(tmp_path))
+    assert method_label(tiny, "td") == "td"
+    assert problem_label(tiny, "Blackjack") == "Blackjack"
+
+
+def test_figures_render_mathtext_labels_per_problem(tmp_path: Path) -> None:
+    """Every configured label (with LaTeX math) renders, and each problem gets its own file."""
+    from ie692_rl.plotting import plot_learning_curves, plot_tuning
+
+    methods = names(CONFIG["tuning"]["methods"])
+    labels = {m: method_label(CONFIG, m) for m in methods}
+    problems = {p: problem_label(CONFIG, p) for p in ("GridWorld", "Blackjack")}
+    history = [
+        r | {"problem": p, "method": m}
+        for p in problems
+        for m in methods
+        for seed in range(2)
+        for r in history_rows_for(seed)
+    ]
+    tuning = [
+        {
+            "problem": p,
+            "method": m,
+            "min_updates": 1,
+            "mean_gap_lower": 0.1 * i,
+            "mean_gap_upper": 1.0,
+            "gap_lower_standard_error": 0.01,
+        }
+        for p in problems
+        for i, m in enumerate(methods)
+    ]
+    curves = plot_learning_curves(
+        history, {"GridWorld": 100, "Blackjack": 100}, methods, labels, problems, tmp_path
+    )
+    grids = plot_tuning(tuning, methods, labels, problems, tmp_path)
+    assert [p.name for p in curves] == ["learning_curves_gridworld.png", "learning_curves_blackjack.png"]
+    assert [p.name for p in grids] == ["tuning_gridworld.png", "tuning_blackjack.png"]
+    assert all(p.stat().st_size > 10_000 for p in curves + grids)
+
+
+def history_rows_for(seed: int) -> list[dict[str, object]]:
+    return [
+        {"seed": seed, "gap": g, "cumulative_observations": 10 * i, "status": "updated"}
+        for i, g in enumerate([0.3, 0.2 - 0.01 * seed, 0.1])
+    ]
 
 
 def test_selection_can_be_overridden(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

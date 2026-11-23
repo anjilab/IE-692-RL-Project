@@ -57,7 +57,7 @@ ENVIRONMENTS: dict[str, Any] = {
 ESTIMATORS: dict[str, type[QEstimator]] = {"tomc": TOMC, "true_online_td": TrueOnlineTD}
 DIVERGENCES: dict[str, type[BregmanDivergence]] = {"kl": KL, "euclidean": Euclidean, "tsallis": Tsallis}
 SPMD_KEYS = ("step_size", "tau", "tau_power")
-PROBLEM_KEYS = ("environment", "budget")
+PROBLEM_KEYS = ("environment", "budget", "label")
 MAX_TUNED_PARAMETERS = 3
 
 
@@ -126,6 +126,7 @@ def method_spec(config: configparser.ConfigParser, method: str, problem: str) ->
     settings.update({key: value for key, value in problem_section.items() if key.startswith("spmd.")})
     if config.has_section(f"{section} @ {problem}"):
         settings.update(config[f"{section} @ {problem}"])
+    settings.pop("label", None)  # display name for figures, see method_label
     estimator, divergence = settings.pop("estimator"), settings.pop("divergence")
     if estimator not in ESTIMATORS or divergence not in DIVERGENCES:
         raise ValueError(f"[{section}]: unknown estimator {estimator!r} or divergence {divergence!r}")
@@ -155,6 +156,16 @@ def make_env(config: configparser.ConfigParser, problem: str) -> Environment:
     }
     env: Environment = ENVIRONMENTS[section["environment"]](**settings)
     return env
+
+
+def method_label(config: configparser.ConfigParser, method: str) -> str:
+    """Display name of a method in figures (``label`` in its section; mathtext allowed)."""
+    return config[f"method {method}"].get("label", method)
+
+
+def problem_label(config: configparser.ConfigParser, problem: str) -> str:
+    """Display name of a problem in figures (``label`` in its section; mathtext allowed)."""
+    return config[f"problem {problem}"].get("label", problem)
 
 
 def problem_budget(config: configparser.ConfigParser, problem: str) -> int:

@@ -67,7 +67,7 @@ def test_default_pipeline_finishes_within_ten_minutes(tmp_path: Path) -> None:
 
 
 def test_tomc_cannot_cover_gridworld30_under_the_uniform_policy() -> None:
-    """Documents the 30x30 limitation: 10^7 steps leave many required pairs unvisited (see README)."""
+    """30x30 limitation: 10^7 steps leave many required pairs unvisited (see results/benchmark.md)."""
     env = get_env("gridworld30")
     with pytest.raises(BudgetExhaustedError, match=r"TOMC incomplete: \d+/3600"):
         TOMC().estimate(env, uniform_policy(900, 4), np.random.default_rng(0), 10_000_000)

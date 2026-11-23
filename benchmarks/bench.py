@@ -10,7 +10,6 @@ Measures, on this machine:
 
     python benchmarks/bench.py                 # 1, 2, 4, 5 (about a minute)
     python benchmarks/bench.py --run           # also time the real pipeline
-    python benchmarks/bench.py --run --problems GridWorld30 --methods true_online_td
 
 Writes a Markdown report to --output (default results/benchmark.md) and exits non-zero if the
 projected (or, with --run, measured) time exceeds --limit seconds.
