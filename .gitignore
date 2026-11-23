@@ -14,4 +14,14 @@ IE_692_Project.pdf
 course_project_v4.pdf
 .DS_Store
 .DS_Store
-**.pycentropy_reg_spmd/data/m5_raw/
+**.pyc
+src/ie692_rl/envs/data/m5_raw/
+
+# tooling caches and build output
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.ipynb_checkpoints/

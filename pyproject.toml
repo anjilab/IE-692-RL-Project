@@ -1,13 +1,74 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
 [project]
 name = "ie-692-rl-project"
 version = "0.1.0"
+description = "IE 692 course project: TOMC + SPMD baseline and three enhancements on GridWorld, Blackjack and an M5 inventory MDP."
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "matplotlib>=3.11.2",
+    "numba>=0.68.1",
     "numpy>=2.5.5",
 ]
 
-[dependency-groups]
+[project.optional-dependencies]
 dev = [
-    "ipykernel>=7.4.0",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "ruff>=0.8",
 ]
+notebooks = [
+    "ipykernel>=7.4.0",
+    "nbconvert>=7.16",
+    "pandas>=2.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ie692_rl"]
+
+# ----------------------------------------------------------------------------- tests
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+addopts = "-ra --strict-markers -m 'not slow and not perf'"
+markers = [
+    "slow: long statistical checks (30x30 GridWorld, many seeds); run with -m slow",
+    "perf: throughput and memory benchmarks; run with -m perf",
+]
+filterwarnings = ["error"]
+
+# ----------------------------------------------------------------------------- lint / types
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+src = ["src", "tests", "benchmarks", "."]
+extend-include = ["*.ipynb"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "N", "SIM", "RUF", "NPY", "PT", "C4", "PIE", "RET"]
+ignore = [
+    "N803",   # argument names such as Q or P follow the lecture notation
+    "N806",   # same for local variables
+    "RUF001", # Greek letters (τ, η, γ) in strings are intentional
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"notebooks/*.ipynb" = ["E402", "E501", "B018"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests", "benchmarks", "tune.py"]
+mypy_path = "src"
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["numba", "numba.*", "matplotlib", "matplotlib.*"]
+ignore_missing_imports = true
