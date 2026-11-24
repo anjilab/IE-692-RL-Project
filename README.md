@@ -75,4 +75,4 @@ its Bregman divergence as objects. The baseline is `TOMC` + `KL`, and each enhan
    Config method: `true_online_td`.
 3. **Entropy-regularized SPMD** (`enhancements/entropy_reg_spmd/`): `tau > 0` adds τ·Σ π log π to the
    sampled costs and uses the closed-form KL step π ∝ π^{1/(1+ητ)} exp(−ηQ/(1+ητ)); `AnnealedTau`
-   gives τ_k = τ₀/(k+1). Config methods: `entropy_reg`, `entropy_reg_annealed`.
+   gives τ_k = τ₀/(k+1)^p (set `spmd.tau_power = p`). Config method: `entropy_reg`.

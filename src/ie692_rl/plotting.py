@@ -15,6 +15,7 @@ every figure even when other methods are skipped.
 
 from collections.abc import Sequence
 from pathlib import Path
+from textwrap import fill
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -28,6 +29,7 @@ from ie692_rl.experiment import Row, best_per_method, gap_curve
 SERIES = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948")
 INK, INK_SECONDARY, AXIS, GRID = "#0b0b0b", "#3d3c39", "#a3a29b", "#e4e3dd"
 CURVE_POINTS = np.linspace(0, 1, 201)
+LABEL_WIDTH = 22  # characters per line of an unrotated method name under the tuning plot
 STYLE: dict[RcKeyType, Any] = {
     "font.family": "STIXGeneral",
     "mathtext.fontset": "stix",
@@ -183,7 +185,7 @@ def plot_tuning(
             rotate = len(present) > 3  # long method names only need rotating when there are many
             ax.set_xticks(
                 range(len(present)),
-                [labels.get(m, m) for m in present],
+                [labels.get(m, m) if rotate else fill(labels.get(m, m), LABEL_WIDTH) for m in present],
                 rotation=25 if rotate else 0,
                 ha="right" if rotate else "center",
             )

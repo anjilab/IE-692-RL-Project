@@ -189,7 +189,9 @@ def test_unimplemented_divergences_are_skipped(
 
 
 def test_combinations_and_building() -> None:
-    spec = method_spec(CONFIG, "entropy_reg_annealed", "GridWorld")
+    config = load_config(ROOT / "config.cfg")
+    config["method entropy_reg"]["spmd.tau_power"] = "1.0"  # annealed tau
+    spec = method_spec(config, "entropy_reg", "GridWorld")
     combos = spec.combinations()
     expected = math.prod(len(values) for values in spec.grid.values())
     assert expected > 1

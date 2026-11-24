@@ -10,7 +10,6 @@ rollouts; ties broken by the upper bound). ``selection = exact_gap`` uses the ex
     method (config.cfg)    estimator         divergence   tuned parameters
     baseline               TOMC              KL           step size x TOMC bias
     entropy_reg            TOMC              KL, tau > 0  tau x step size x TOMC bias
-    entropy_reg_annealed   TOMC              KL, tau_k    tau_0 x step size x TOMC bias
     true_online_td         True Online TD    KL           step size x TD step size x lambda
     bregman_euclidean      TOMC              Euclidean    step size x TOMC bias
     bregman_tsallis        TOMC              Tsallis      step size x Tsallis index
