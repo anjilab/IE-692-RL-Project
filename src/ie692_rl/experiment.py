@@ -7,12 +7,13 @@ tuning seeds; the best combination per method then runs on the full budget with 
 ``config.cfg`` sections (see the file for the full list):
 
     [tuning]                        problems, methods, seeds, tune_fraction, baseline, z test settings
-    [problem <name>]                environment = gridworld | blackjack | inventory, budget, env settings,
-                                    exclude = methods not run on this problem
+    [problem <name>]                environment = gridworld | blackjack | inventory, budget, env settings
     [method <name>]                 estimator = tomc | true_online_td, divergence = kl | euclidean | tsallis,
                                     then parameters: spmd.step_size, spmd.tau, spmd.tau_power,
                                     estimator.<field>, divergence.<field>. A comma-separated value is a
-                                    grid axis; a single value is fixed.
+                                    grid axis; a single value is fixed. estimator_from = <method> takes
+                                    the estimator.* settings this method leaves unset from that
+                                    method's tuned choice on the same problem (two-stage tuning).
     [method <name> @ <problem>]     overrides for one problem (for example a TD budget per iteration)
 
 Each run is a ``Job``; workers rebuild (and cache) the environment from the config path, so jobs are
@@ -63,7 +64,7 @@ ESTIMATORS: dict[str, type[QEstimator]] = {
 }
 DIVERGENCES: dict[str, type[BregmanDivergence]] = {"kl": KL, "euclidean": Euclidean, "tsallis": Tsallis}
 SPMD_KEYS = ("step_size", "tau", "tau_power")
-PROBLEM_KEYS = ("environment", "budget", "label", "exclude")
+PROBLEM_KEYS = ("environment", "budget", "label")
 MAX_TUNED_PARAMETERS = 3
 
 
@@ -113,6 +114,7 @@ class MethodSpec:
     estimator: str
     divergence: str
     grid: dict[str, list[Value]]
+    estimator_from: str | None = None  # method whose tuned estimator settings fill the unset ones
 
     def combinations(self) -> list[Params]:
         keys = sorted(self.grid)
@@ -133,6 +135,7 @@ def method_spec(config: configparser.ConfigParser, method: str, problem: str) ->
     if config.has_section(f"{section} @ {problem}"):
         settings.update(config[f"{section} @ {problem}"])
     settings.pop("label", None)  # display name for figures, see method_label
+    estimator_from = settings.pop("estimator_from", None)
     estimator, divergence = settings.pop("estimator"), settings.pop("divergence")
     if estimator not in ESTIMATORS or divergence not in DIVERGENCES:
         raise ValueError(f"[{section}]: unknown estimator {estimator!r} or divergence {divergence!r}")
@@ -147,10 +150,21 @@ def method_spec(config: configparser.ConfigParser, method: str, problem: str) ->
             raise ValueError(f"[{section}]: unknown SPMD parameter {key!r}")
     if "spmd.step_size" not in grid:
         raise ValueError(f"[{section}]: spmd.step_size is required")
-    spec = MethodSpec(method, estimator, divergence, grid)
+    spec = MethodSpec(method, estimator, divergence, grid, estimator_from)
     if len(spec.tuned) > MAX_TUNED_PARAMETERS:
         raise ValueError(f"[{section}]: the guideline allows at most 3 tuned parameters, got {spec.tuned}")
     return spec
+
+
+def inherit_estimator(spec: MethodSpec, parent: MethodSpec, chosen: Row) -> MethodSpec:
+    """``spec`` with every estimator.* setting it leaves unset fixed at ``parent``'s tuned choice."""
+    if parent.estimator != spec.estimator:
+        raise ValueError(
+            f"{spec.name} ({spec.estimator}) cannot take estimator settings from {parent.name} "
+            f"({parent.estimator})"
+        )
+    inherited = {k: [chosen[k]] for k in parent.grid if k.startswith("estimator.") and k not in spec.grid}
+    return MethodSpec(spec.name, spec.estimator, spec.divergence, spec.grid | inherited, spec.estimator_from)
 
 
 def make_env(config: configparser.ConfigParser, problem: str) -> Environment:
@@ -176,16 +190,6 @@ def problem_label(config: configparser.ConfigParser, problem: str) -> str:
 
 def problem_budget(config: configparser.ConfigParser, problem: str) -> int:
     return int(config[f"problem {problem}"]["budget"])
-
-
-def problem_methods(config: configparser.ConfigParser, problem: str, methods: Sequence[str]) -> list[str]:
-    """``methods`` without those the problem's ``exclude`` key lists (for example linear TD features,
-    which are defined only for GridWorld and Blackjack)."""
-    excluded = names(config[f"problem {problem}"].get("exclude", ""))
-    unknown = [m for m in excluded if not config.has_section(f"method {m}")]
-    if unknown:
-        raise ValueError(f"[problem {problem}] exclude: unknown methods {unknown}")
-    return [m for m in methods if m not in excluded]
 
 
 def figure_groups(config: configparser.ConfigParser, methods: Sequence[str]) -> dict[str, list[str]]:

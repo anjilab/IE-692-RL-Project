@@ -39,9 +39,12 @@ SPMD, a Q estimator plus a Bregman-divergence step:
 | `entropy`: enhancement 3 | `entropy_reg`, `entropy_reg_annealed` | TOMC | KL with τ > 0 |
 | `combined` | `true_online_td` (KL), `td_euclidean`, `td_tsallis`, `combined_entropy`, `combined_annealed` | True Online TD(λ) | KL, Euclidean, Tsallis; KL with τ > 0 |
 
-Every grid runs on all three problems (GridWorld, Blackjack and the M5 Inventory problem), except
-the linear TD methods, which have no feature map for Inventory (`exclude` in its `[problem]` section).
-Entropy regularization has a closed-form step only for KL, so the combined grid pairs it with KL.
+Each of the four grids is tuned separately on each of the three problems (GridWorld, Blackjack and
+the M5 Inventory problem): 4 grids x 3 problems. The combined grid is tuned second: its methods
+(`estimator_from = true_online_td`) use the TD step size and λ that the evaluation grid chose for
+True Online TD(λ) on the same problem, and tune their own step size and Tsallis index or entropy
+weight. Entropy regularization has a closed-form step only for KL, so the combined grid pairs it
+with KL.
 
 Every TD estimator restarts from Q = 0 at each SPMD iteration (`estimator.q_init`), so an action it
 never samples keeps Q = 0, which looks cheaper than any sampled action. KL and Tsallis with index

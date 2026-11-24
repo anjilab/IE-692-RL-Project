@@ -18,6 +18,7 @@ from ie692_rl.experiment import (
     build_method,
     figure_groups,
     gap_curve,
+    inherit_estimator,
     int_list,
     load_config,
     make_certifier,
@@ -30,7 +31,6 @@ from ie692_rl.experiment import (
     parse_value,
     problem_budget,
     problem_label,
-    problem_methods,
     read_csv,
     selection_of,
     summarize,
@@ -559,14 +559,17 @@ def test_method_spec_dataclass() -> None:
     ]
 
 
-def test_problem_exclude_skips_methods(tmp_path: Path) -> None:
-    methods = names(CONFIG["tuning"]["methods"])
-    inventory = problem_methods(CONFIG, "Inventory", methods)
-    assert "true_online_td_linear" not in inventory
-    assert "true_online_td" in inventory
-    assert problem_methods(CONFIG, "GridWorld", methods) == methods
-    bad = load_config(
-        write_config(tmp_path, TINY_CONFIG.replace("budget = 6000", "budget = 6000\nexclude = nope"))
-    )
-    with pytest.raises(ValueError, match="nope"):
-        problem_methods(bad, "Blackjack", ["td"])
+def test_estimator_from_inherits_the_tuned_estimator_settings_per_problem() -> None:
+    for problem in ("GridWorld", "Blackjack", "Inventory"):
+        parent = method_spec(CONFIG, "true_online_td", problem)
+        child = method_spec(CONFIG, "combined_entropy", problem)
+        assert child.estimator_from == "true_online_td"
+        assert "estimator.eta" not in child.grid
+        chosen = {"estimator.eta": 0.1, "estimator.lam": 0.8, "estimator.n_steps": 1}
+        resolved = inherit_estimator(child, parent, chosen)
+        assert resolved.grid["estimator.eta"] == [0.1]
+        assert resolved.grid["estimator.lam"] == [0.8]
+        assert resolved.grid["estimator.n_steps"] == child.grid["estimator.n_steps"]  # own setting kept
+        assert resolved.tuned == child.tuned
+    with pytest.raises(ValueError, match="cannot take estimator settings"):
+        inherit_estimator(child, method_spec(CONFIG, "baseline", "GridWorld"), {})

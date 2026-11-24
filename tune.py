@@ -22,8 +22,9 @@ rollouts; ties broken by the upper bound). ``selection = exact_gap`` uses the ex
     combined_entropy          True Online TD          KL, tau > 0  tau x step size
     combined_annealed         True Online TD          KL, tau_k    tau_0 x step size
 
-The methods form four grids (``[figures]`` groups): bregman, evaluation, entropy, and combined.
-A problem's ``exclude`` key skips methods on it (Inventory has no linear TD features).
+The methods form four grids (``[figures]`` groups), each tuned on every problem: bregman,
+evaluation, entropy, and combined. Methods with ``estimator_from`` (the combined grid) are tuned in a
+second stage with the estimator settings their source method chose on the same problem.
 
 Every TD estimator restarts from Q = 0 at each SPMD iteration (``estimator.q_init``, default 0).
 
@@ -57,6 +58,7 @@ from ie692_rl.experiment import (
     best_per_method,
     default_workers,
     figure_groups,
+    inherit_estimator,
     int_list,
     load_config,
     map_jobs,
@@ -66,7 +68,6 @@ from ie692_rl.experiment import (
     params_of,
     problem_budget,
     problem_label,
-    problem_methods,
     read_csv,
     selection_of,
     summarize,
@@ -141,10 +142,16 @@ def main(argv: list[str] | None = None) -> list[Row]:
         print(f"figures redrawn in {args.output}")
         return []
 
-    specs = {(p, m): method_spec(config, m, p) for p in problems for m in problem_methods(config, p, methods)}
+    specs = {(p, m): method_spec(config, m, p) for p in problems for m in methods}
 
     tuned = tune(
-        config_path, specs, budgets, float(tuning["tune_fraction"]), int_list(tuning["tuning_seeds"]), args
+        config_path,
+        specs,
+        budgets,
+        float(tuning["tune_fraction"]),
+        int_list(tuning["tuning_seeds"]),
+        selection,
+        args,
     )
     write_csv(args.output / "tuning.csv", tuned)
     plot_tuning_figures(tuned)
@@ -189,21 +196,45 @@ def tune(
     budgets: dict[str, int],
     fraction: float,
     seeds: list[int],
+    selection: str,
     args: argparse.Namespace,
 ) -> list[Row]:
-    """Grid search (or reload the saved one); one row per (problem, method, combination)."""
-    if args.reuse_tuning:
-        keep = set(specs)
-        return [r for r in read_csv(args.output / "tuning.csv") if (r["problem"], r["method"]) in keep]
-    started = time.perf_counter()
-    jobs, plan = [], []
-    for (problem, _), spec in specs.items():
-        budget = int(budgets[problem] * fraction)
-        plan.append((spec, problem, budget))
-        jobs += tuning_jobs(config_path, problem, spec, budget, seeds)
-    results = map_jobs(jobs, args.workers)
-    print(f"tuning: {len(jobs)} jobs in {time.perf_counter() - started:.1f}s")
-    return [row for spec, problem, budget in plan for row in tuning_rows(spec, problem, budget, results)]
+    """Grid search (or reload the saved one); one row per (problem, method, combination).
+
+    Two stages: methods with ``estimator_from`` are tuned after the method they take their estimator
+    settings from, using its choice on the same problem; their entries in ``specs`` are replaced by
+    the resolved specs, which the full runs then use.
+    """
+    saved = list(read_csv(args.output / "tuning.csv")) if args.reuse_tuning else None
+    rows: list[Row] = []
+    for second_stage in (False, True):
+        stage = {
+            key: spec for key, spec in specs.items() if (spec.estimator_from is not None) == second_stage
+        }
+        if second_stage:
+            chosen = best_per_method(rows, selection)
+            for (problem, method), spec in stage.items():
+                parent = (problem, spec.estimator_from)
+                if parent not in chosen:
+                    raise ValueError(
+                        f"{method} takes its estimator settings from {spec.estimator_from}, which has no "
+                        f"tuned choice on {problem}; tune both together"
+                    )
+                stage[problem, method] = inherit_estimator(spec, specs[parent], chosen[parent])
+            specs.update(stage)
+        if saved is not None:
+            rows += [r for r in saved if (r["problem"], r["method"]) in stage]
+            continue
+        started = time.perf_counter()
+        jobs, plan = [], []
+        for (problem, _), spec in stage.items():
+            budget = int(budgets[problem] * fraction)
+            plan.append((spec, problem, budget))
+            jobs += tuning_jobs(config_path, problem, spec, budget, seeds)
+        results = map_jobs(jobs, args.workers)
+        print(f"tuning: {len(jobs)} jobs in {time.perf_counter() - started:.1f}s")
+        rows += [row for spec, problem, budget in plan for row in tuning_rows(spec, problem, budget, results)]
+    return rows
 
 
 def report_choices(specs: dict[tuple[str, str], MethodSpec], rows: list[Row], selection: str) -> None:
