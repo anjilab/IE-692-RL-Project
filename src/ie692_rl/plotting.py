@@ -78,6 +78,7 @@ PARAM_LABELS = {  # config key -> (axis label, symbol for group headers)
 }
 GRID_UNITS = 10  # panel widths per figure row, in heatmap columns
 TITLE_CHARS_PER_UNIT = 8  # panel-title characters that fit in one heatmap column (0.62 in, 11 pt)
+LEGEND_CHARS_PER_COLUMN = 26  # longest label that still fits three legend columns under a curve plot
 
 
 def method_colors(methods: Sequence[str]) -> dict[str, str]:
@@ -158,7 +159,9 @@ def plot_learning_curves(
             _decimal_axis(ax.yaxis)
             xlabel = f"Environment Steps ({unit})" if unit else "Environment Steps"
             _style_axes(ax, problem_labels.get(problem, problem), xlabel, f"Optimality Gap {GAP}")
-            fig.legend(loc="outside lower center", ncol=min(3, len(ax.lines)), frameon=False)
+            longest = max(_plain_length(line.get_label()) for line in ax.lines)
+            ncol = 3 if longest <= LEGEND_CHARS_PER_COLUMN else 2
+            fig.legend(loc="outside lower center", ncol=min(ncol, len(ax.lines)), frameon=False)
             path = figure_path(output_dir, "learning_curves", problem, group)
             fig.savefig(path)
             plt.close(fig)
@@ -261,10 +264,14 @@ class _Grid:
         return max(2, len(self.col_values))
 
 
+def _plain_length(text: str) -> int:
+    """Rendered length in characters; a mathtext symbol renders about one character wide."""
+    return len(re.sub(r"\$[^$]*\$", "x", text))
+
+
 def _slot_width(grid: _Grid, title: str) -> int:
     """Heatmap columns a panel needs: its own width, or more if its title is longer."""
-    plain = re.sub(r"\$[^$]*\$", "x", title)  # a mathtext symbol renders about one character wide
-    return max(grid.width, math.ceil(len(plain) / TITLE_CHARS_PER_UNIT))
+    return max(grid.width, math.ceil(_plain_length(title) / TITLE_CHARS_PER_UNIT))
 
 
 def _cell_text(value: float) -> str:

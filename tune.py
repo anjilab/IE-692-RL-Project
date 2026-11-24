@@ -19,6 +19,11 @@ rollouts; ties broken by the upper bound). ``selection = exact_gap`` uses the ex
     td_lambda_tabular/_linear TD(lambda)              KL           step size x TD step size x lambda
     td_euclidean              True Online TD          Euclidean    step size
     td_tsallis                True Online TD          Tsallis      step size x Tsallis index
+    combined_entropy          True Online TD          KL, tau > 0  tau x step size
+    combined_annealed         True Online TD          KL, tau_k    tau_0 x step size
+
+The methods form four grids (``[figures]`` groups): bregman, evaluation, entropy, and combined.
+A problem's ``exclude`` key skips methods on it (Inventory has no linear TD features).
 
 Every TD estimator restarts from Q = 0 at each SPMD iteration (``estimator.q_init``, default 0).
 
@@ -61,6 +66,7 @@ from ie692_rl.experiment import (
     params_of,
     problem_budget,
     problem_label,
+    problem_methods,
     read_csv,
     selection_of,
     summarize,
@@ -135,7 +141,7 @@ def main(argv: list[str] | None = None) -> list[Row]:
         print(f"figures redrawn in {args.output}")
         return []
 
-    specs = {(p, m): method_spec(config, m, p) for p in problems for m in methods}
+    specs = {(p, m): method_spec(config, m, p) for p in problems for m in problem_methods(config, p, methods)}
 
     tuned = tune(
         config_path, specs, budgets, float(tuning["tune_fraction"]), int_list(tuning["tuning_seeds"]), args

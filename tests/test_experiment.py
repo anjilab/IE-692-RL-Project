@@ -30,6 +30,7 @@ from ie692_rl.experiment import (
     parse_value,
     problem_budget,
     problem_label,
+    problem_methods,
     read_csv,
     selection_of,
     summarize,
@@ -556,3 +557,16 @@ def test_method_spec_dataclass() -> None:
         (("estimator.bias", 0.1), ("spmd.step_size", 1.0)),
         (("estimator.bias", 0.1), ("spmd.step_size", 2.0)),
     ]
+
+
+def test_problem_exclude_skips_methods(tmp_path: Path) -> None:
+    methods = names(CONFIG["tuning"]["methods"])
+    inventory = problem_methods(CONFIG, "Inventory", methods)
+    assert "true_online_td_linear" not in inventory
+    assert "true_online_td" in inventory
+    assert problem_methods(CONFIG, "GridWorld", methods) == methods
+    bad = load_config(
+        write_config(tmp_path, TINY_CONFIG.replace("budget = 6000", "budget = 6000\nexclude = nope"))
+    )
+    with pytest.raises(ValueError, match="nope"):
+        problem_methods(bad, "Blackjack", ["td"])

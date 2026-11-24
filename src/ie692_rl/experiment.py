@@ -7,7 +7,8 @@ tuning seeds; the best combination per method then runs on the full budget with 
 ``config.cfg`` sections (see the file for the full list):
 
     [tuning]                        problems, methods, seeds, tune_fraction, baseline, z test settings
-    [problem <name>]                environment = gridworld | blackjack | inventory, budget, env settings
+    [problem <name>]                environment = gridworld | blackjack | inventory, budget, env settings,
+                                    exclude = methods not run on this problem
     [method <name>]                 estimator = tomc | true_online_td, divergence = kl | euclidean | tsallis,
                                     then parameters: spmd.step_size, spmd.tau, spmd.tau_power,
                                     estimator.<field>, divergence.<field>. A comma-separated value is a
@@ -62,7 +63,7 @@ ESTIMATORS: dict[str, type[QEstimator]] = {
 }
 DIVERGENCES: dict[str, type[BregmanDivergence]] = {"kl": KL, "euclidean": Euclidean, "tsallis": Tsallis}
 SPMD_KEYS = ("step_size", "tau", "tau_power")
-PROBLEM_KEYS = ("environment", "budget", "label")
+PROBLEM_KEYS = ("environment", "budget", "label", "exclude")
 MAX_TUNED_PARAMETERS = 3
 
 
@@ -175,6 +176,16 @@ def problem_label(config: configparser.ConfigParser, problem: str) -> str:
 
 def problem_budget(config: configparser.ConfigParser, problem: str) -> int:
     return int(config[f"problem {problem}"]["budget"])
+
+
+def problem_methods(config: configparser.ConfigParser, problem: str, methods: Sequence[str]) -> list[str]:
+    """``methods`` without those the problem's ``exclude`` key lists (for example linear TD features,
+    which are defined only for GridWorld and Blackjack)."""
+    excluded = names(config[f"problem {problem}"].get("exclude", ""))
+    unknown = [m for m in excluded if not config.has_section(f"method {m}")]
+    if unknown:
+        raise ValueError(f"[problem {problem}] exclude: unknown methods {unknown}")
+    return [m for m in methods if m not in excluded]
 
 
 def figure_groups(config: configparser.ConfigParser, methods: Sequence[str]) -> dict[str, list[str]]:

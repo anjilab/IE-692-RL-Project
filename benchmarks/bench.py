@@ -29,7 +29,14 @@ import numpy as np
 from ie692_rl.core import TOMC, BudgetExhaustedError, ExactScorer, uniform_policy
 from ie692_rl.enhancements.true_online_td import TrueOnlineTD
 from ie692_rl.envs import Blackjack, Environment, GridWorld, RetailInventory
-from ie692_rl.experiment import load_config, make_certifier, method_spec, names, problem_budget
+from ie692_rl.experiment import (
+    load_config,
+    make_certifier,
+    method_spec,
+    names,
+    problem_budget,
+    problem_methods,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
@@ -145,7 +152,7 @@ def section_projection(
     total_seconds = 0.0
     for problem in problems:
         budget = problem_budget(config, problem)
-        for method in methods:
+        for method in problem_methods(config, problem, methods):
             spec = method_spec(config, method, problem)
             combos = len(spec.combinations())
             steps = combos * n_tune * budget * fraction + n_test * budget
