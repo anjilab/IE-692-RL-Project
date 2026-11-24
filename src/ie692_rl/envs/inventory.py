@@ -38,8 +38,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from numba import njit
 
-from ie692_rl._jit import njit
 from ie692_rl.envs.base import Environment, Kernel, TabularModel
 from ie692_rl.types import FloatArray, IntArray
 
@@ -247,7 +247,7 @@ class RetailInventory(Environment):
         return {"stock": int(stock), "weekday": int(day)}
 
 
-@njit
+@njit(cache=True)
 def _step(
     params: tuple[Any, ...], state: int, action: int, rng: np.random.Generator
 ) -> tuple[int, float, bool]:
@@ -268,7 +268,7 @@ def _step(
     return next_state, cost, False
 
 
-@njit
+@njit(cache=True)
 def _reset(params: tuple[Any, ...], rng: np.random.Generator) -> int:
     start: int = params[10]
     return start

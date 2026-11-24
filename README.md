@@ -15,23 +15,48 @@ uv sync --all-extras                     # with uv
 pip install -e ".[dev,notebooks]"        # or with pip, inside a virtual environment
 ```
 
-The dependencies are `numpy`, `numba` (which compiles the sampling loops) and `matplotlib`.
+The dependencies are `numpy`, `numba` (which compiles the sampling loops: TOMC, TD and the
+certifier's rollouts) and `matplotlib`.
 
 ## Running
 
 ```bash
-python tune.py                           # grid search, full runs, CSVs and figures -> results/tuned/
+python tune.py                           # every experiment: grid search, full runs, CSVs, figures -> results/tuned/
 python tune.py --problems Blackjack --methods baseline bregman_tsallis
 python tune.py --plot-only               # redraw the figures from saved CSVs
-pytest                                   # tests (ruff check . and mypy for lint and types)
+pytest                                   # tests (ruff check . for lint)
 python benchmarks/bench.py --run         # runtime and memory report -> results/benchmark.md
 ```
 
-All settings are in `config.cfg`: problems, budgets, seeds, each method's parameter grid, and the
-display names used in figures. Tuning follows the handout: at most three parameters with three values
-each, run on 10% of the budget. The best combination is the one with the smallest certified lower
-bound on the optimality gap (model-free, `core/optimality.py`); it then runs on the full budget with
-20 test seeds.
+`config.cfg` is the only config, and `python tune.py` runs every experiment in it together: problems,
+budgets, seeds, each method's parameter grid, and the display names used in figures. Every method is
+SPMD, a Q estimator plus a Bregman-divergence step:
+
+| Grid (`[figures]` group) | Methods | Estimator | Step |
+|---|---|---|---|
+| `bregman`: enhancement 1 | `baseline`, `bregman_euclidean`, `bregman_tsallis` | TOMC | KL, Euclidean, Tsallis |
+| `evaluation`: enhancement 2 | `true_online_td`, plus `td_zero_tabular`, `td_lambda_tabular` and the `_linear` versions | TD | KL |
+| `entropy`: enhancement 3 | `entropy_reg` | TOMC | KL with τ > 0 |
+| `combined` | `true_online_td` (KL), `td_euclidean`, `td_tsallis`, `combined_entropy`, `combined_annealed` | True Online TD(λ) | KL, Euclidean, Tsallis; KL with τ > 0 |
+
+Each of the four grids is tuned separately on each of the three problems (GridWorld, Blackjack and
+the M5 Inventory problem): 4 grids x 3 problems. The combined grid is tuned second: its methods
+(`estimator_from = true_online_td`) use the TD step size and λ that the evaluation grid chose for
+True Online TD(λ) on the same problem, and tune their own step size and Tsallis index or entropy
+weight. Entropy regularization has a closed-form step only for KL, so the combined grid pairs it
+with KL.
+
+Every TD estimator restarts from Q = 0 at each SPMD iteration (`estimator.q_init`), so an action it
+never samples keeps Q = 0, which looks cheaper than any sampled action. KL and Tsallis with index
+below 1 raise such an action's probability gradually; Euclidean can move a whole state's probability
+onto it in one step, which is why `td_euclidean` does poorly on GridWorld.
+
+Tuning follows the handout: at most three parameters with three values each, run on 10% of the
+budget. The best combination is the one with the smallest certified lower bound on the optimality gap
+(model-free, `core/optimality.py`); it then runs on the full budget with 20 test seeds. `[figures]` in
+`config.cfg` splits the methods into figure groups (at most eight methods each, baseline first). Per
+problem and group, `tuning_grid_<problem>_<group>.png` shows every combination's lower bound as a
+heatmap (chosen cell outlined) and `learning_curves_<problem>_<group>.png` the full runs.
 
 ## Problem setup
 
@@ -76,3 +101,16 @@ its Bregman divergence as objects. The baseline is `TOMC` + `KL`, and each enhan
 3. **Entropy-regularized SPMD** (`enhancements/entropy_reg_spmd/`): `tau > 0` adds τ·Σ π log π to the
    sampled costs and uses the closed-form KL step π ∝ π^{1/(1+ητ)} exp(−ηQ/(1+ητ)); `AnnealedTau`
    gives τ_k = τ₀/(k+1)^p (set `spmd.tau_power = p`). Config method: `entropy_reg`.
+
+### Policy evaluation charts
+
+Compare **TOMC, TD(0), TD(λ), and True Online TD(λ)**, with tabular and linear features, within the
+KL-SPMD policy optimization loop on every problem (the `evaluation` grid of `config.cfg`).
+
+1. Generate the results: `python tune.py` (every experiment in `config.cfg` -> `results/tuned/`).
+2. Open [`notebooks/td_evaluation_viz.ipynb`](notebooks/td_evaluation_viz.ipynb), select the
+   project's Python environment, and run all cells. It reads `results/tuned/history.csv` and produces
+   policy-evaluation error curves and learned-policy optimality gap curves.
+
+Curves show the mean across 20 test seeds, with bands representing ±1 standard error. Figures and
+CSV tables are saved to `results/td_evaluation_updated/`.

@@ -47,11 +47,11 @@ from ie692_rl.experiment import (
 from ie692_rl.plotting import (
     AXIS,
     STYLE,
-    _decimal_axis,
-    _style_axes,
+    decimal_axis,
     figure_path,
     method_colors,
     step_unit,
+    style_axes,
 )
 from ie692_rl.types import FloatArray
 
@@ -186,11 +186,11 @@ def plot(rows: list[Row], budgets: dict[str, int], methods: list[str]) -> None:
             optimal = next(r["optimal_value"] for r in rows if r["problem"] == problem)
             ax.axhline(optimal, color=AXIS, linewidth=1.4, linestyle="--", label=r"$V^{\star}(s_0)$")
             ax.set_xlim(0, budget / scale)
-            _decimal_axis(ax.xaxis)
-            _decimal_axis(ax.yaxis)
+            decimal_axis(ax.xaxis)
+            decimal_axis(ax.yaxis)
             title = config[f"problem {problem}"].get("label", problem)
             xlabel = f"Environment Steps ({unit})" if unit else "Environment Steps"
-            _style_axes(ax, title, xlabel, r"Estimated $\hat{V}^{\pi_t}(s_0)$")
+            style_axes(ax, title, xlabel, r"Estimated $\hat{V}^{\pi_t}(s_0)$")
             fig.legend(loc="outside lower center", ncol=3, frameon=False)
             fig.savefig(figure_path(RESULTS, "estimated_value", problem))
             plt.close(fig)

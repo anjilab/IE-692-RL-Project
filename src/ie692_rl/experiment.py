@@ -11,7 +11,9 @@ tuning seeds; the best combination per method then runs on the full budget with 
     [method <name>]                 estimator = tomc | true_online_td, divergence = kl | euclidean | tsallis,
                                     then parameters: spmd.step_size, spmd.tau, spmd.tau_power,
                                     estimator.<field>, divergence.<field>. A comma-separated value is a
-                                    grid axis; a single value is fixed.
+                                    grid axis; a single value is fixed. estimator_from = <method> takes
+                                    the estimator.* settings this method leaves unset from that
+                                    method's tuned choice on the same problem (two-stage tuning).
     [method <name> @ <problem>]     overrides for one problem (for example a TD budget per iteration)
 
 Each run is a ``Job``; workers rebuild (and cache) the environment from the config path, so jobs are
@@ -36,7 +38,6 @@ from ie692_rl.core.divergence import BregmanDivergence
 from ie692_rl.core.estimator import QEstimator
 from ie692_rl.core.exact import ExactScorer
 from ie692_rl.core.optimality import RolloutCertifier
-from ie692_rl.core.policy import uniform_policy
 from ie692_rl.core.spmd import Schedule, run_spmd
 from ie692_rl.core.tomc import TOMC
 from ie692_rl.enhancements.bregman_spmd import KL, Euclidean, Tsallis
@@ -113,6 +114,7 @@ class MethodSpec:
     estimator: str
     divergence: str
     grid: dict[str, list[Value]]
+    estimator_from: str | None = None  # method whose tuned estimator settings fill the unset ones
 
     def combinations(self) -> list[Params]:
         keys = sorted(self.grid)
@@ -133,6 +135,7 @@ def method_spec(config: configparser.ConfigParser, method: str, problem: str) ->
     if config.has_section(f"{section} @ {problem}"):
         settings.update(config[f"{section} @ {problem}"])
     settings.pop("label", None)  # display name for figures, see method_label
+    estimator_from = settings.pop("estimator_from", None)
     estimator, divergence = settings.pop("estimator"), settings.pop("divergence")
     if estimator not in ESTIMATORS or divergence not in DIVERGENCES:
         raise ValueError(f"[{section}]: unknown estimator {estimator!r} or divergence {divergence!r}")
@@ -147,10 +150,21 @@ def method_spec(config: configparser.ConfigParser, method: str, problem: str) ->
             raise ValueError(f"[{section}]: unknown SPMD parameter {key!r}")
     if "spmd.step_size" not in grid:
         raise ValueError(f"[{section}]: spmd.step_size is required")
-    spec = MethodSpec(method, estimator, divergence, grid)
+    spec = MethodSpec(method, estimator, divergence, grid, estimator_from)
     if len(spec.tuned) > MAX_TUNED_PARAMETERS:
         raise ValueError(f"[{section}]: the guideline allows at most 3 tuned parameters, got {spec.tuned}")
     return spec
+
+
+def inherit_estimator(spec: MethodSpec, parent: MethodSpec, chosen: Row) -> MethodSpec:
+    """``spec`` with every estimator.* setting it leaves unset fixed at ``parent``'s tuned choice."""
+    if parent.estimator != spec.estimator:
+        raise ValueError(
+            f"{spec.name} ({spec.estimator}) cannot take estimator settings from {parent.name} "
+            f"({parent.estimator})"
+        )
+    inherited = {k: [chosen[k]] for k in parent.grid if k.startswith("estimator.") and k not in spec.grid}
+    return MethodSpec(spec.name, spec.estimator, spec.divergence, spec.grid | inherited, spec.estimator_from)
 
 
 def make_env(config: configparser.ConfigParser, problem: str) -> Environment:
@@ -176,6 +190,19 @@ def problem_label(config: configparser.ConfigParser, problem: str) -> str:
 
 def problem_budget(config: configparser.ConfigParser, problem: str) -> int:
     return int(config[f"problem {problem}"]["budget"])
+
+
+def figure_groups(config: configparser.ConfigParser, methods: Sequence[str]) -> dict[str, list[str]]:
+    """Methods shown together in one set of figures: ``[figures]`` maps a group name (the figure file
+    suffix) to its methods. Without that section, all ``methods`` share one figure and no suffix."""
+    if not config.has_section("figures"):
+        return {"": list(methods)}
+    groups = {group: names(value) for group, value in config["figures"].items()}
+    for group, members in groups.items():
+        unknown = [m for m in members if m not in methods]
+        if unknown:
+            raise ValueError(f"[figures] {group}: {unknown} not in [tuning] methods")
+    return groups
 
 
 # ----------------------------------------------------------------------------- selection
@@ -232,16 +259,6 @@ def build_method(spec: MethodSpec, params: Params) -> Method:
         float(spmd["step_size"]),
         tau,
     )
-
-
-def is_available(spec: MethodSpec) -> bool:
-    """False while the method's divergence is still a placeholder (raises NotImplementedError)."""
-    method = build_method(spec, spec.combinations()[0])
-    try:
-        method.divergence.step(uniform_policy(1, 2), np.zeros((1, 2)), 1.0)
-    except NotImplementedError:
-        return False
-    return True
 
 
 # ----------------------------------------------------------------------------- running jobs

@@ -22,14 +22,14 @@ to 1e-6 with every candidate clamped at 1e-6; about 40+ evaluations per state, i
   * Warm start from the first-order solution lam ~ -sum pi^(2-q) eta Q / sum pi^(2-q) (exact as
     eta -> 0) when it lies in the bracket, else from lo. Machine precision in about 1-10 iterations
     per state (tests/test_divergence.py checks the average).
-  * Compiled with numba and looped over states, without clamping, then renormalized.
+  * Vectorized over states (each row stops updating once it has converged), without clamping,
+    then renormalized.
 """
 
 import math
 
 import numpy as np
 
-from ie692_rl._jit import njit
 from ie692_rl.core.divergence import BregmanDivergence
 from ie692_rl.types import FloatArray
 
@@ -72,57 +72,40 @@ class Tsallis(BregmanDivergence):
         return f"Tsallis(index={self.index:g})"
 
 
-@njit
 def tsallis_step(policy: FloatArray, scaled_costs: FloatArray, index: float) -> tuple[FloatArray, int]:
-    """Row-wise Tsallis SPMD step given eta * (Q - row min); also returns the total Newton iterations."""
-    n_states, n_actions = policy.shape
+    """Row-wise Tsallis SPMD step given eta * (Q - row min); also returns the total Newton iterations
+    (summed over states)."""
     e = index - 1.0
-    new = np.zeros((n_states, n_actions))
-    offsets = np.empty(n_actions)  # c_a; -inf for actions that stay at 0
-    total_iterations = 0
-    for s in range(n_states):
-        top, n_free = -np.inf, 0
-        weight_sum, weighted_cost = 0.0, 0.0
-        for a in range(n_actions):
-            if index < 1.0 and policy[s, a] <= 0.0:
-                offsets[a] = -np.inf  # barrier: an excluded action stays excluded
-            else:
-                offsets[a] = policy[s, a] ** e / e - scaled_costs[s, a]
-                n_free += 1
-                if policy[s, a] > 0.0 and np.isfinite(scaled_costs[s, a]):
-                    weight = policy[s, a] ** (1.0 - e)
-                    weight_sum += weight
-                    weighted_cost += weight * scaled_costs[s, a]
-            top = max(top, offsets[a])
-        lo, hi = top - 1.0 / e, top - float(n_free) ** (-e) / e  # f(lo) >= 0 >= f(hi)
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore", under="ignore"):
+        free = policy > 0.0 if index < 1.0 else np.ones(policy.shape, dtype=bool)  # q < 1: 0 stays 0
+        offsets = np.where(free, policy**e / e - scaled_costs, -np.inf)  # c_a
+        top = offsets.max(axis=1)
+        lo, hi = top - 1.0 / e, top - free.sum(axis=1) ** (-e) / e  # f(lo) >= 0 >= f(hi)
         # Warm start: linearizing x_a around pi_a gives lam ~ -sum pi^(2-q) eta Q / sum pi^(2-q), nearly
         # exact for small steps; otherwise start at lo, where the largest term alone equals 1.
-        lam = -weighted_cost / weight_sum if weight_sum > 0.0 else lo
-        if not lo < lam < hi:
-            lam = lo
+        weights = np.where((policy > 0.0) & np.isfinite(scaled_costs), policy ** (1.0 - e), 0.0)
+        weight_sum = weights.sum(axis=1)
+        weighted_cost = (weights * np.where(weights > 0.0, scaled_costs, 0.0)).sum(axis=1)
+        lam = np.where(weight_sum > 0.0, -weighted_cost / weight_sum, lo)
+        lam = np.where((lo < lam) & (lam < hi), lam, lo)
+        active, total_iterations = np.ones(len(policy), dtype=bool), 0
         for _ in range(MAX_ITERATIONS):
-            total_iterations += 1
-            total, slope = 0.0, 0.0
-            for a in range(n_actions):
-                base = e * (offsets[a] - lam)
-                if base > 0.0:
-                    x = base ** (1.0 / e)
-                    total += x
-                    if x > 0.0:
-                        slope += x ** (1.0 - e)  # x^(2 - q) = -d x / d lam
-            if total > 1.0:
-                lo = lam
-            else:
-                hi = lam
-            if abs(total - 1.0) <= 1e-15 or hi - lo <= 1e-15 * max(1.0, abs(lam)):
+            total_iterations += int(active.sum())
+            x = _solution(offsets, lam, e)
+            total = x.sum(axis=1)
+            slope = np.where(x > 0.0, x ** (1.0 - e), 0.0).sum(axis=1)  # x^(2 - q) = -d x / d lam
+            lo = np.where(active & (total > 1.0), lam, lo)
+            hi = np.where(active & (total <= 1.0), lam, hi)
+            active &= (np.abs(total - 1.0) > 1e-15) & (hi - lo > 1e-15 * np.maximum(1.0, np.abs(lam)))
+            if not active.any():
                 break
-            newton = lam + (total - 1.0) / slope if slope > 0.0 else lo
-            lam = newton if lo < newton < hi else 0.5 * (lo + hi)
-        row_sum = 0.0
-        for a in range(n_actions):
-            base = e * (offsets[a] - lam)
-            new[s, a] = base ** (1.0 / e) if base > 0.0 else 0.0
-            row_sum += new[s, a]
-        for a in range(n_actions):
-            new[s, a] /= row_sum
-    return new, total_iterations
+            newton = np.where(slope > 0.0, lam + (total - 1.0) / slope, lo)
+            lam = np.where(active, np.where((lo < newton) & (newton < hi), newton, 0.5 * (lo + hi)), lam)
+        new = _solution(offsets, lam, e)
+    return new / new.sum(axis=1, keepdims=True), total_iterations
+
+
+def _solution(offsets: FloatArray, lam: FloatArray, e: float) -> FloatArray:
+    """x_a(lam) = ((q - 1) (c_a - lam))^(1 / (q - 1)), 0 where the base is <= 0."""
+    base = e * (offsets - lam[:, None])
+    return np.where(base > 0.0, np.where(base > 0.0, base, 1.0) ** (1.0 / e), 0.0)

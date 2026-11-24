@@ -1,0 +1,13 @@
+Problem,Method,η,λ,SPMD step,Policy updates,Obs/update,Eval error,Final gap,Δ gap vs TOMC,Verdict
+Blackjack,TOMC (baseline),,,100.0,379,300,0.821 ± 0.036,0.087 ± 0.022,,—
+Blackjack,TD(0),0.02,,10.0,60,2k,0.104 ± 0.002,0.083 ± 0.011,-0.004,tie
+Blackjack,TD(λ),0.5,0.95,100.0,60,2k,0.504 ± 0.010,0.019 ± 0.013,-0.068,better
+Blackjack,True Online TD(λ),0.5,0.8,100.0,60,2k,0.417 ± 0.007,0.087 ± 0.022,-0.001,tie
+GridWorld,TOMC (baseline),,,100.0,46,385k,0.078 ± 0.018,0.134 ± 0.043,,—
+GridWorld,TD(0),0.5,,1.0,400,50k,0.026 ± 0.000,0.033 ± 0.000,-0.101,better
+GridWorld,TD(λ),0.1,0.8,1.0,400,50k,0.026 ± 0.000,0.032 ± 0.000,-0.102,better
+GridWorld,True Online TD(λ),0.5,0.95,1.0,400,50k,0.030 ± 0.000,0.016 ± 0.001,-0.119,better
+Inventory,TOMC (baseline),,,1.0,336,8.93k,2.550 ± 0.056,4.255 ± 0.141,,—
+Inventory,TD(0),0.5,,1.0,150,20k,0.696 ± 0.015,0.839 ± 0.059,-3.416,better
+Inventory,TD(λ),0.1,0.8,1.0,150,20k,0.682 ± 0.014,0.849 ± 0.042,-3.406,better
+Inventory,True Online TD(λ),0.5,0.8,1.0,150,20k,0.816 ± 0.022,1.203 ± 0.068,-3.052,better

@@ -5,10 +5,9 @@ Measures, on this machine:
   2. a projection of the full ``tune.py`` pipeline from the config (total steps / throughput / workers),
   3. (with --run) the actual end-to-end ``tune.py`` wall time and peak memory, checked against the limit,
   4. memory of the data structures that grow with the problem size: the old stored-trajectory TOMC
-     versus the ring buffer, dense versus sparse models and features,
-  5. GridWorld 30x30 feasibility: how many TOMC pairs the uniform policy covers within a step budget.
+     versus the ring buffer, dense versus sparse models and features.
 
-    python benchmarks/bench.py                 # 1, 2, 4, 5 (about a minute)
+    python benchmarks/bench.py                 # 1, 2, 4 (under a minute)
     python benchmarks/bench.py --run           # also time the real pipeline
 
 Writes a Markdown report to --output (default results/benchmark.md) and exits non-zero if the
@@ -30,7 +29,7 @@ import numpy as np
 from ie692_rl.core import TOMC, BudgetExhaustedError, ExactScorer, uniform_policy
 from ie692_rl.enhancements.true_online_td import TrueOnlineTD
 from ie692_rl.envs import Blackjack, Environment, GridWorld, RetailInventory
-from ie692_rl.experiment import is_available, load_config, make_certifier, method_spec, names, problem_budget
+from ie692_rl.experiment import load_config, make_certifier, method_spec, names, problem_budget
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
@@ -151,7 +150,7 @@ def section_projection(
             combos = len(spec.combinations())
             steps = combos * n_tune * budget * fraction + n_test * budget
             rate = rates[problem]
-            if spec.estimator == "true_online_td":
+            if spec.estimator != "tomc":  # every TD estimator samples n_steps per estimate
                 per_estimate = max(float(v) for v in spec.grid.get("estimator.n_steps", [10_000]))
                 sampling = steps / rate.td
             else:
@@ -184,9 +183,8 @@ def section_memory() -> list[str]:
     _, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     per_step = peak / n
-    big = GridWorld(size=30)
-    sparse = big.model()
-    S, A = big.n_states, big.n_actions
+    sparse = env.model()
+    S, A = env.n_states, env.n_actions
     sparse_bytes = sparse.next_states.nbytes + sparse.probs.nbytes + sparse.costs.nbytes
     return [
         "## Memory",
@@ -195,45 +193,14 @@ def section_memory() -> list[str]:
         "|---|---|---|",
         f"| TOMC stream (stored trajectory vs ring buffer) | {per_step:.0f} B per step: "
         f"{per_step * 1e8 / 1e9:.1f} GB for 10^8 steps | O(S A + 350) values: "
-        f"{(3 * S * A * 8 + 350 * 9) / 1e3:.0f} kB on 30x30, any length |",
-        f"| exact model, 30x30 (dense P vs sparse) | {S * A * S * 8 / 1e6:.0f} MB "
-        f"| {sparse_bytes / 1e6:.2f} MB |",
-        f"| TD tabular features, 30x30 (dense Phi vs index table) | {(S * A) ** 2 * 8 / 1e6:.0f} MB "
+        f"{(3 * S * A * 8 + 350 * 9) / 1e3:.0f} kB on 10x10, any length |",
+        f"| exact model, 10x10 (dense P vs sparse) | {S * A * S * 8 / 1e3:.0f} kB "
+        f"| {sparse_bytes / 1e3:.0f} kB |",
+        f"| TD tabular features, 10x10 (dense Phi vs index table) | {(S * A) ** 2 * 8 / 1e6:.1f} MB "
         f"| {S * A * 8 / 1e3:.0f} kB |",
         f"| TD history (Q snapshot per record vs V(s0)) | {S * A * 8 / 1e3:.0f} kB per record "
         "| 16 B per record |",
     ]
-
-
-def section_gridworld30(max_steps: int) -> list[str]:
-    """Coverage of TOMC's required pairs on 30x30 under the uniform policy, by step budget."""
-    env = GridWorld(size=30)
-    policy = uniform_policy(env.n_states, env.n_actions)
-    lines = [
-        "## GridWorld 30x30 feasibility (TOMC, uniform policy)",
-        "",
-        "| step budget | required pairs covered | time |",
-        "|---|---|---|",
-    ]
-    budget = 1_000_000
-    while budget <= max_steps:
-        started = time.perf_counter()
-        try:
-            TOMC().estimate(env, policy, np.random.default_rng(0), budget)
-            covered = "all 3600"
-        except BudgetExhaustedError as error:
-            covered = str(error).split(": ")[1].split(" after")[0]
-        lines.append(f"| {budget:.0e} | {covered} | {time.perf_counter() - started:.1f} s |")
-        budget *= 10
-    lines += [
-        "",
-        "Hazards cover 10% of the 30x30 grid and send the agent back to the start with probability "
-        "0.8, so a uniformly random walk rarely reaches the far side: coverage grows by only a few "
-        "hundred pairs per tenfold increase in steps. Extrapolating that trend, a single TOMC estimate "
-        "would not finish within the ~1.8e10 steps one core samples in 10 minutes. This is a property "
-        "of the problem, not of the step rate.",
-    ]
-    return lines
 
 
 def main() -> int:
@@ -246,22 +213,14 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=7)
     parser.add_argument("--limit", type=float, default=600.0, help="seconds")
     parser.add_argument("--run", action="store_true", help="also run tune.py end to end and time it")
-    parser.add_argument(
-        "--gridworld30-steps", type=float, default=1e8, help="largest TOMC budget to try on 30x30"
-    )
     parser.add_argument("--output", type=Path, default=ROOT / "results" / "benchmark.md")
     args = parser.parse_args()
 
     config = load_config(args.config)
     problems = args.problems or names(config["tuning"]["problems"])
-    methods = args.methods or [
-        m
-        for m in names(config["tuning"]["methods"])
-        if all(is_available(method_spec(config, m, p)) for p in problems)
-    ]
+    methods = args.methods or names(config["tuning"]["methods"])
     envs: dict[str, Environment] = {
         "GridWorld": GridWorld(),
-        "GridWorld30": GridWorld(size=30),
         "Blackjack": Blackjack(),
         "Inventory": RetailInventory.from_m5(),
     }
@@ -298,7 +257,6 @@ def main() -> int:
             "",
         ]
     report += [*section_memory(), ""]
-    report += [*section_gridworld30(int(args.gridworld30_steps)), ""]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text("\n".join(report))
     print("\n".join(report))

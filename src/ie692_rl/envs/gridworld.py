@@ -15,8 +15,8 @@ random with a fixed ``layout_seed``, never on the start or a goal.
 from typing import Any
 
 import numpy as np
+from numba import njit
 
-from ie692_rl._jit import njit
 from ie692_rl.envs.base import Environment, Kernel, TabularModel
 from ie692_rl.types import BoolArray
 
@@ -108,7 +108,7 @@ class GridWorld(Environment):
         return "\n".join(" ".join(row) for row in cells.reshape(self.rows, self.cols))
 
 
-@njit
+@njit(cache=True)
 def _step(
     params: tuple[Any, ...], state: int, action: int, rng: np.random.Generator
 ) -> tuple[int, float, bool]:
@@ -122,7 +122,7 @@ def _step(
     return row * cols + col, cost, False
 
 
-@njit
+@njit(cache=True)
 def _reset(params: tuple[Any, ...], rng: np.random.Generator) -> int:
     start: int = params[4]
     return start

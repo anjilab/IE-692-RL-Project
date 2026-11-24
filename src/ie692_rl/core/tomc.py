@@ -23,8 +23,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+from numba import njit
 
-from ie692_rl._jit import njit, njit_generic
 from ie692_rl.core.estimator import BudgetExhaustedError, Estimate, QEstimator, resolve_extra_cost
 from ie692_rl.core.policy import check_policy, policy_cdf, sample_action
 from ie692_rl.envs.base import Environment, ResetKernel, StepKernel
@@ -102,7 +102,7 @@ class TOMC(QEstimator):
         return Estimate(q, int(n), int(visited))
 
 
-@njit
+@njit(cache=True)
 def _window_return(
     costs: FloatArray, dones: BoolArray, first: int, last: int, window: int, gamma: float
 ) -> float:
@@ -114,7 +114,7 @@ def _window_return(
     return total
 
 
-@njit_generic
+@njit
 def _tomc_kernel(
     step: StepKernel,
     reset: ResetKernel,

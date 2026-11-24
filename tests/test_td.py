@@ -71,9 +71,15 @@ def test_blackjack_aggregation() -> None:
         assert low != high
 
 
-def test_no_aggregation_for_inventory() -> None:
-    with pytest.raises(ValueError, match="No aggregated features"):
-        linear_features(get_env("inventory"))
+def test_inventory_aggregates_pairs_of_stock_levels_per_weekday() -> None:
+    env = get_env("inventory")
+    features = linear_features(env)
+    stock, day = env.decode(np.arange(env.n_states))
+    for s in range(env.n_states):
+        same_group = (day == day[s]) & (stock // 2 == stock[s] // 2)
+        assert (features.feature_of[same_group] == features.feature_of[s]).all()  # shared parameters
+        assert not np.isin(features.feature_of[~same_group], features.feature_of[s]).any()
+    assert len(np.unique(features.feature_of)) == len(np.unique(features.feature_of[:, 0])) * env.n_actions
 
 
 # ----------------------------------------------------------------------------- exactness

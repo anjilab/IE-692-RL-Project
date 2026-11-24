@@ -1,0 +1,7 @@
+Problem,Budget,Method,Obs/iteration (mean),Obs/iteration (median),First iteration (median),Policy updates (mean),Policy updates (min–max)
+Blackjack,120k,TOMC (baseline),300,274,485,379,1–423
+Blackjack,120k,TD (all variants),2k,2k,2k,60,60–60
+GridWorld,20M,TOMC (baseline),385k,187k,288k,46,1–152
+GridWorld,20M,TD (all variants),50k,50k,50k,400,400–400
+Inventory,3M,TOMC (baseline),8.93k,4.21k,100k,336,130–831
+Inventory,3M,TD (all variants),20k,20k,20k,150,150–150
