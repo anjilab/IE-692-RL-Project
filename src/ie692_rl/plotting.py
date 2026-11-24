@@ -101,7 +101,7 @@ def step_unit(budget: int) -> tuple[float, str]:
     return 1.0, ""
 
 
-def _style_axes(ax: Any, title: str, xlabel: str, ylabel: str) -> None:
+def style_axes(ax: Any, title: str, xlabel: str, ylabel: str) -> None:
     ax.grid(color=GRID, linewidth=0.7)
     ax.set_axisbelow(True)
     ax.spines[["top", "right"]].set_visible(False)
@@ -112,7 +112,7 @@ def _style_axes(ax: Any, title: str, xlabel: str, ylabel: str) -> None:
     ax.set_ylabel(ylabel, color=INK_SECONDARY)
 
 
-def _decimal_axis(axis: Any) -> None:
+def decimal_axis(axis: Any) -> None:
     """At most ~6 ticks at round steps (1, 2, 2.5, 5 x 10^k), plain decimals with no scientific offset."""
     axis.set_major_locator(MaxNLocator(nbins=6, steps=[1, 2, 2.5, 5, 10]))
     axis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}"))
@@ -155,10 +155,10 @@ def plot_learning_curves(
                 top = max(top, float((mean + se).max()))
             ax.set_xlim(0, x[-1])
             ax.set_ylim(0, 1.05 * top if top > 0 else 1.0)
-            _decimal_axis(ax.xaxis)
-            _decimal_axis(ax.yaxis)
+            decimal_axis(ax.xaxis)
+            decimal_axis(ax.yaxis)
             xlabel = f"Environment Steps ({unit})" if unit else "Environment Steps"
-            _style_axes(ax, problem_labels.get(problem, problem), xlabel, f"Optimality Gap {GAP}")
+            style_axes(ax, problem_labels.get(problem, problem), xlabel, f"Optimality Gap {GAP}")
             longest = max(_plain_length(line.get_label()) for line in ax.lines)
             ncol = 3 if longest <= LEGEND_CHARS_PER_COLUMN else 2
             fig.legend(loc="outside lower center", ncol=min(ncol, len(ax.lines)), frameon=False)
@@ -223,10 +223,10 @@ def plot_tuning(
                 ha="right" if rotate else "center",
             )
             ax.set_xlim(-0.6, len(present) - 0.4)
-            _decimal_axis(ax.yaxis)
+            decimal_axis(ax.yaxis)
             top = ax.get_ylim()[1]
             ax.set_ylim(-0.04 * top, top)  # a small margin so combinations at exactly 0 stay visible
-            _style_axes(ax, problem_labels.get(problem, problem), "", ylabel)
+            style_axes(ax, problem_labels.get(problem, problem), "", ylabel)
             ax.grid(axis="x", visible=False)
             markers = [
                 Line2D([], [], marker="o", markersize=12, fillstyle="none", color=INK, ls="", label="Chosen"),
