@@ -7,13 +7,20 @@ seed) runs on the full budget with the test seeds. "Best" is model-free by defau
 certified lower bound on the optimality gap (advantage gap / policy improvement, from validation
 rollouts; ties broken by the upper bound). ``selection = exact_gap`` uses the exact gap instead.
 
-    method (config.cfg)    estimator         divergence   tuned parameters
-    baseline               TOMC              KL           step size x TOMC bias
-    entropy_reg            TOMC              KL, tau > 0  tau x step size x TOMC bias
-    entropy_reg_annealed   TOMC              KL, tau_k    tau_0 x step size x TOMC bias
-    true_online_td         True Online TD    KL           step size x TD step size x lambda
-    bregman_euclidean      TOMC              Euclidean    step size x TOMC bias
-    bregman_tsallis        TOMC              Tsallis      step size x Tsallis index
+    method (config.cfg)       estimator               divergence   tuned parameters
+    baseline                  TOMC                    KL           step size
+    bregman_euclidean         TOMC                    Euclidean    step size
+    bregman_tsallis           TOMC                    Tsallis      step size x Tsallis index
+    entropy_reg               TOMC                    KL, tau > 0  tau x step size
+    entropy_reg_annealed      TOMC                    KL, tau_k    tau_0 x step size
+    true_online_td            True Online TD, tabular KL           step size x TD step size x lambda
+    true_online_td_linear     True Online TD, linear  KL           step size x TD step size x lambda
+    td_zero_tabular / _linear TD(0)                   KL           step size x TD step size
+    td_lambda_tabular/_linear TD(lambda)              KL           step size x TD step size x lambda
+    td_euclidean              True Online TD          Euclidean    step size
+    td_tsallis                True Online TD          Tsallis      step size x Tsallis index
+
+Every TD estimator restarts from Q = 0 at each SPMD iteration (``estimator.q_init``, default 0).
 
 Examples:
     python tune.py                                   # every problem and method in [tuning]
@@ -23,9 +30,10 @@ Examples:
     python tune.py --plot-only                       # redraw the figures from the saved CSVs
 
 Writes to --output (default results/tuned/): tuning.csv, history.csv (every iteration of every full
-run), summary.csv (final gaps vs the baseline), and per problem tuning_<problem>.png (dot plot),
-tuning_grid_<problem>.png (heatmap of every combination) and learning_curves_<problem>.png (display
-names from the ``label`` keys in config.cfg).
+run), summary.csv (final gaps vs the baseline), and per problem and ``[figures]`` group
+tuning_<problem>_<group>.png (dot plot), tuning_grid_<problem>_<group>.png (heatmap of every
+combination) and learning_curves_<problem>_<group>.png (display names from the ``label`` keys in
+config.cfg).
 """
 
 import argparse
@@ -43,6 +51,7 @@ from ie692_rl.experiment import (
     Row,
     best_per_method,
     default_workers,
+    figure_groups,
     int_list,
     load_config,
     map_jobs,
@@ -103,19 +112,26 @@ def main(argv: list[str] | None = None) -> list[Row]:
     selection = args.selection or selection_of(config)
     args.output.mkdir(parents=True, exist_ok=True)
 
+    groups = figure_groups(config, all_methods)
+
+    def plotted(rows: list[Row]) -> dict[str, list[str]]:
+        """Figure groups with data (all members are passed on, so each keeps its color slot)."""
+        present = {r["method"] for r in rows}
+        return {group: members for group, members in groups.items() if present.intersection(members)}
+
+    def plot_tuning_figures(rows: list[Row]) -> None:
+        for group, members in plotted(rows).items():
+            plot_tuning(rows, members, labels, problem_labels, args.output, selection, group)
+            plot_tuning_grid(rows, members, labels, problem_labels, args.output, selection, group)
+
+    def plot_curve_figures(history: list[Row]) -> None:
+        for group, members in plotted(history).items():
+            plot_learning_curves(history, budgets, members, labels, problem_labels, args.output, group)
+
     if args.plot_only:
-        saved = list(read_csv(args.output / "tuning.csv"))
-        plot_tuning(saved, all_methods, labels, problem_labels, args.output, selection)
-        plot_tuning_grid(saved, all_methods, labels, problem_labels, args.output, selection)
+        plot_tuning_figures(list(read_csv(args.output / "tuning.csv")))
         if (args.output / "history.csv").exists():
-            plot_learning_curves(
-                list(read_csv(args.output / "history.csv")),
-                budgets,
-                all_methods,
-                labels,
-                problem_labels,
-                args.output,
-            )
+            plot_curve_figures(list(read_csv(args.output / "history.csv")))
         print(f"figures redrawn in {args.output}")
         return []
 
@@ -125,8 +141,7 @@ def main(argv: list[str] | None = None) -> list[Row]:
         config_path, specs, budgets, float(tuning["tune_fraction"]), int_list(tuning["tuning_seeds"]), args
     )
     write_csv(args.output / "tuning.csv", tuned)
-    plot_tuning(tuned, all_methods, labels, problem_labels, args.output, selection)
-    plot_tuning_grid(tuned, all_methods, labels, problem_labels, args.output, selection)
+    plot_tuning_figures(tuned)
     report_choices(specs, tuned, selection)
     if args.tune_only:
         return []
@@ -145,7 +160,7 @@ def main(argv: list[str] | None = None) -> list[Row]:
     ]
     print(f"full runs: {len(jobs)} jobs in {time.perf_counter() - started:.1f}s")
     write_csv(args.output / "history.csv", history)
-    plot_learning_curves(history, budgets, all_methods, labels, problem_labels, args.output)
+    plot_curve_figures(history)
     summary = summarize(
         history,
         tuning.get("baseline", "baseline"),

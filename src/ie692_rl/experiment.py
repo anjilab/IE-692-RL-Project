@@ -177,6 +177,19 @@ def problem_budget(config: configparser.ConfigParser, problem: str) -> int:
     return int(config[f"problem {problem}"]["budget"])
 
 
+def figure_groups(config: configparser.ConfigParser, methods: Sequence[str]) -> dict[str, list[str]]:
+    """Methods shown together in one set of figures: ``[figures]`` maps a group name (the figure file
+    suffix) to its methods. Without that section, all ``methods`` share one figure and no suffix."""
+    if not config.has_section("figures"):
+        return {"": list(methods)}
+    groups = {group: names(value) for group, value in config["figures"].items()}
+    for group, members in groups.items():
+        unknown = [m for m in members if m not in methods]
+        if unknown:
+            raise ValueError(f"[figures] {group}: {unknown} not in [tuning] methods")
+    return groups
+
+
 # ----------------------------------------------------------------------------- selection
 
 

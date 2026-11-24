@@ -150,7 +150,7 @@ def section_projection(
             combos = len(spec.combinations())
             steps = combos * n_tune * budget * fraction + n_test * budget
             rate = rates[problem]
-            if spec.estimator == "true_online_td":
+            if spec.estimator != "tomc":  # every TD estimator samples n_steps per estimate
                 per_estimate = max(float(v) for v in spec.grid.get("estimator.n_steps", [10_000]))
                 sampling = steps / rate.td
             else:

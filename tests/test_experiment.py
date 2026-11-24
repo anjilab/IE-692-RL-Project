@@ -16,6 +16,7 @@ from ie692_rl.experiment import (
     MethodSpec,
     best_per_method,
     build_method,
+    figure_groups,
     gap_curve,
     int_list,
     load_config,
@@ -430,13 +431,34 @@ def test_figures_render_mathtext_labels_per_problem(tmp_path: Path) -> None:
         for p in problems
         for i, m in enumerate(methods)
     ]
-    curves = plot_learning_curves(
-        history, {"GridWorld": 100, "Blackjack": 100}, methods, labels, problems, tmp_path
-    )
-    grids = plot_tuning(tuning, methods, labels, problems, tmp_path)
-    assert [p.name for p in curves] == ["learning_curves_gridworld.png", "learning_curves_blackjack.png"]
-    assert [p.name for p in grids] == ["tuning_gridworld.png", "tuning_blackjack.png"]
+    curves, grids = [], []
+    for group, members in figure_groups(CONFIG, methods).items():
+        curves += plot_learning_curves(
+            history, {"GridWorld": 100, "Blackjack": 100}, members, labels, problems, tmp_path, group
+        )
+        grids += plot_tuning(tuning, members, labels, problems, tmp_path, group=group)
+        assert [p.name for p in curves[-2:]] == [
+            f"learning_curves_gridworld_{group}.png",
+            f"learning_curves_blackjack_{group}.png",
+        ]
+        assert [p.name for p in grids[-2:]] == [
+            f"tuning_gridworld_{group}.png",
+            f"tuning_blackjack_{group}.png",
+        ]
     assert all(p.stat().st_size > 10_000 for p in curves + grids)
+
+
+def test_figure_groups_cover_every_method_and_reject_unknown_ones(tmp_path: Path) -> None:
+    methods = names(CONFIG["tuning"]["methods"])
+    groups = figure_groups(CONFIG, methods)
+    assert {m for members in groups.values() for m in members} == set(methods)
+    baseline = CONFIG["tuning"]["baseline"]
+    assert all(members[0] == baseline and len(members) <= 8 for members in groups.values())
+    tiny = load_config(write_config(tmp_path))
+    assert figure_groups(tiny, ["td"]) == {"": ["td"]}  # no [figures]: one figure, no file suffix
+    bad = load_config(write_config(tmp_path, TINY_CONFIG + "\n[figures]\nall = td, nope\n"))
+    with pytest.raises(ValueError, match="nope"):
+        figure_groups(bad, ["td"])
 
 
 def test_tuning_grid_lays_out_every_combination(tmp_path: Path) -> None:

@@ -1,20 +1,27 @@
-"""Report figures written by ``tune.py``: one PNG per problem and figure type.
+"""Report figures written by ``tune.py``: one PNG per problem, figure type and figure group.
 
-    learning_curves_<problem>.png   exact optimality gap of the current policy vs environment steps
-                                    (mean over the test seeds, band = +-1 standard error)
-    tuning_<problem>.png            the grid search: every combination's selection metric per method
-    tuning_grid_<problem>.png       the same grid search as heatmaps: one panel per method, rows = step
-                                    size, columns = the other tuned parameters, chosen cell outlined
+    learning_curves_<problem>_<group>.png   exact optimality gap of the current policy vs environment
+                                            steps (mean over the test seeds, band = +-1 standard error)
+    tuning_<problem>_<group>.png            the grid search: every combination's selection metric per
+                                            method
+    tuning_grid_<problem>_<group>.png       the same grid search as heatmaps: one panel per method, rows
+                                            = step size, columns = the other tuned parameters, chosen
+                                            cell outlined
+
+A figure group is a ``[figures]`` entry in ``config.cfg`` (at most eight methods); without that
+section all methods share one figure and the file names have no ``_<group>`` suffix.
 
 Titles carry only the problem's display name and legends the methods' display names (``label`` in
 ``config.cfg``); descriptions belong in the figure captions. Math is rendered with matplotlib's
 mathtext in STIX fonts (LaTeX syntax such as ``$V^{\\pi}(s_0)$``, no TeX installation needed).
 
 Colors follow the method, never its rank: each method gets a fixed categorical slot from its position
-in ``[tuning] methods`` (validated palette, adjacent pairs CVD-safe), so a method keeps its color in
-every figure even when other methods are skipped.
+in its figure group (validated palette, adjacent pairs CVD-safe), so a method keeps its color in
+every figure of that group even when other methods are skipped.
 """
 
+import math
+import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -70,6 +77,7 @@ PARAM_LABELS = {  # config key -> (axis label, symbol for group headers)
     "divergence.index": (r"Tsallis Index $q$", r"$q$"),
 }
 GRID_UNITS = 10  # panel widths per figure row, in heatmap columns
+TITLE_CHARS_PER_UNIT = 8  # panel-title characters that fit in one heatmap column (0.62 in, 11 pt)
 
 
 def method_colors(methods: Sequence[str]) -> dict[str, str]:
@@ -78,8 +86,9 @@ def method_colors(methods: Sequence[str]) -> dict[str, str]:
     return dict(zip(methods, SERIES, strict=False))
 
 
-def figure_path(output_dir: Path, kind: str, problem: str) -> Path:
-    return output_dir / f"{kind}_{problem.lower()}.png"
+def figure_path(output_dir: Path, kind: str, problem: str, group: str = "") -> Path:
+    suffix = f"_{group}" if group else ""
+    return output_dir / f"{kind}_{problem.lower()}{suffix}.png"
 
 
 def step_unit(budget: int) -> tuple[float, str]:
@@ -115,6 +124,7 @@ def plot_learning_curves(
     labels: dict[str, str],
     problem_labels: dict[str, str],
     output_dir: Path,
+    group: str = "",
 ) -> list[Path]:
     """One figure per problem: mean exact gap (+-1 SE band) of the policy in use vs environment steps.
 
@@ -149,7 +159,7 @@ def plot_learning_curves(
             xlabel = f"Environment Steps ({unit})" if unit else "Environment Steps"
             _style_axes(ax, problem_labels.get(problem, problem), xlabel, f"Optimality Gap {GAP}")
             fig.legend(loc="outside lower center", ncol=min(3, len(ax.lines)), frameon=False)
-            path = figure_path(output_dir, "learning_curves", problem)
+            path = figure_path(output_dir, "learning_curves", problem, group)
             fig.savefig(path)
             plt.close(fig)
         written.append(path)
@@ -163,6 +173,7 @@ def plot_tuning(
     problem_labels: dict[str, str],
     output_dir: Path,
     selection: str = "gap_lower",
+    group: str = "",
 ) -> list[Path]:
     """One figure per problem: every grid-search combination's selection metric (+-1 SE), grouped by
     method; the chosen combination is ringed and combinations without an update are hollow."""
@@ -219,7 +230,7 @@ def plot_tuning(
                 Line2D([], [], marker="o", markersize=6, mfc="white", color=AXIS, ls="", label="No Update"),
             ]
             ax.legend(handles=markers, loc="upper left", frameon=False)
-            path = figure_path(output_dir, "tuning", problem)
+            path = figure_path(output_dir, "tuning", problem, group)
             fig.savefig(path)
             plt.close(fig)
         written.append(path)
@@ -248,6 +259,12 @@ class _Grid:
     @property
     def width(self) -> int:
         return max(2, len(self.col_values))
+
+
+def _slot_width(grid: _Grid, title: str) -> int:
+    """Heatmap columns a panel needs: its own width, or more if its title is longer."""
+    plain = re.sub(r"\$[^$]*\$", "x", title)  # a mathtext symbol renders about one character wide
+    return max(grid.width, math.ceil(len(plain) / TITLE_CHARS_PER_UNIT))
 
 
 def _cell_text(value: float) -> str:
@@ -330,6 +347,7 @@ def plot_tuning_grid(
     problem_labels: dict[str, str],
     output_dir: Path,
     selection: str = "gap_lower",
+    group: str = "",
 ) -> list[Path]:
     """One figure per problem: each method's grid search as a heatmap of the selection metric (shared
     square-root color scale, value in every cell), with the chosen combination outlined."""
@@ -344,12 +362,14 @@ def plot_tuning_grid(
                 best = chosen.get((problem, method))
                 grids.append((method, grid))
                 picks.append(grid.cells.get(id(best)) if best is not None else None)
+        # Each panel gets a slot wide enough for its heatmap and its title (centered in the slot).
+        slots = [_slot_width(grid, labels.get(method, method)) for method, grid in grids]
         layout: list[list[int]] = [[]]  # panel indices per figure row, at most GRID_UNITS wide
-        for index, (_, grid) in enumerate(grids):
-            if layout[-1] and sum(grids[k][1].width for k in layout[-1]) + grid.width > GRID_UNITS:
+        for index, slot in enumerate(slots):
+            if layout[-1] and sum(slots[k] for k in layout[-1]) + slot > GRID_UNITS:
                 layout.append([])
             layout[-1].append(index)
-        units = max(sum(grids[k][1].width for k in line) for line in layout)
+        units = max(sum(slots[k] for k in line) for line in layout)
         finite = [v for _, g in grids for v in g.values[np.isfinite(g.values)]]
         norm = PowerNorm(0.5, vmin=0.0, vmax=max(finite) if finite and max(finite) > 0 else 1.0)
         with plt.rc_context(STYLE):
@@ -360,10 +380,11 @@ def plot_tuning_grid(
                 start = 0
                 for k in line:
                     method, grid = grids[k]
-                    ax = fig.add_subplot(spec[line_number, start : start + grid.width])
+                    left = start + (slots[k] - grid.width) // 2
+                    ax = fig.add_subplot(spec[line_number, left : left + grid.width])
                     mesh = _draw_grid(ax, grid, norm, picks[k], labels.get(method, method))
                     axes.append(ax)
-                    start += grid.width
+                    start += slots[k]
             colorbar = fig.colorbar(mesh, ax=axes, shrink=0.9, aspect=30, ticks=_sqrt_ticks(norm.vmax))
             colorbar.ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}"))
             colorbar.set_label(metric_label, color=INK_SECONDARY)
@@ -374,7 +395,7 @@ def plot_tuning_grid(
             if any(np.isnan(g.values).any() for _, g in grids):
                 legend.append(Patch(facecolor=SEQUENTIAL.get_bad(), edgecolor=AXIS, label="No Update"))
             fig.legend(handles=legend, loc="outside lower center", ncol=len(legend), frameon=False)
-            path = figure_path(output_dir, "tuning_grid", problem)
+            path = figure_path(output_dir, "tuning_grid", problem, group)
             fig.savefig(path)
             plt.close(fig)
         written.append(path)

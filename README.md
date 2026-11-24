@@ -21,19 +21,35 @@ certifier's rollouts) and `matplotlib`.
 ## Running
 
 ```bash
-python tune.py                           # grid search, full runs, CSVs and figures -> results/tuned/
+python tune.py                           # every experiment: grid search, full runs, CSVs, figures -> results/tuned/
 python tune.py --problems Blackjack --methods baseline bregman_tsallis
 python tune.py --plot-only               # redraw the figures from saved CSVs
 pytest                                   # tests (ruff check . for lint)
 python benchmarks/bench.py --run         # runtime and memory report -> results/benchmark.md
 ```
 
-All settings are in `config.cfg`: problems, budgets, seeds, each method's parameter grid, and the
-display names used in figures. Tuning follows the handout: at most three parameters with three values
-each, run on 10% of the budget. The best combination is the one with the smallest certified lower
-bound on the optimality gap (model-free, `core/optimality.py`); it then runs on the full budget with
-20 test seeds. Per problem, `tuning_grid_<problem>.png` shows every combination's lower bound as a
-heatmap (chosen cell outlined) and `learning_curves_<problem>.png` the full runs.
+`config.cfg` is the only config, and `python tune.py` runs every experiment in it together: problems,
+budgets, seeds, each method's parameter grid, and the display names used in figures. Every method is
+SPMD, a Q estimator plus a Bregman-divergence step:
+
+| Experiment | Methods | Estimator | Step |
+|---|---|---|---|
+| Bregman divergences | `baseline`, `bregman_euclidean`, `bregman_tsallis` | TOMC | KL, Euclidean, Tsallis |
+| Entropy regularization | `entropy_reg`, `entropy_reg_annealed` | TOMC | KL with τ > 0 |
+| Q estimators | `true_online_td`, `td_zero_tabular`, `td_lambda_tabular` and their `_linear` versions | TD | KL |
+| Estimator × divergence | `td_euclidean`, `td_tsallis` (KL is `true_online_td`) | True Online TD(λ) | Euclidean, Tsallis |
+
+Every TD estimator restarts from Q = 0 at each SPMD iteration (`estimator.q_init`), so an action it
+never samples keeps Q = 0, which looks cheaper than any sampled action. KL and Tsallis with index
+below 1 raise such an action's probability gradually; Euclidean can move a whole state's probability
+onto it in one step, which is why `td_euclidean` does poorly on GridWorld.
+
+Tuning follows the handout: at most three parameters with three values each, run on 10% of the
+budget. The best combination is the one with the smallest certified lower bound on the optimality gap
+(model-free, `core/optimality.py`); it then runs on the full budget with 20 test seeds. `[figures]` in
+`config.cfg` splits the methods into figure groups (at most eight methods each, baseline first). Per
+problem and group, `tuning_grid_<problem>_<group>.png` shows every combination's lower bound as a
+heatmap (chosen cell outlined) and `learning_curves_<problem>_<group>.png` the full runs.
 
 ## Problem setup
 
