@@ -58,6 +58,21 @@ budget. The best combination is the one with the smallest certified lower bound 
 problem and group, `tuning_grid_<problem>_<group>.png` shows every combination's lower bound as a
 heatmap (chosen cell outlined) and `learning_curves_<problem>_<group>.png` the full runs.
 
+## Reproducing the presentation figures
+
+Install with the notebook extras (see [Installation](#installation)), open a notebook, select the project's
+Python environment and run all cells.
+
+| Figures | Notebook | Needs | Output |
+|---|---|---|---|
+| Baseline: value, observations per iteration, sample efficiency | [`baseline_experiment_runner.ipynb`](notebooks/baseline_experiment_runner.ipynb) | nothing | `results/notebook_baseline/` |
+| Policy evaluation (TD) error and optimality gap | [`td_evaluation_viz.ipynb`](notebooks/td_evaluation_viz.ipynb) | `results/tuned/history.csv` | `results/td_evaluation_updated/` |
+| Entropy regularization: hyperparameter sweep heatmap and learning curves | [`entropy_reg_spmd.ipynb`](notebooks/entropy_reg_spmd.ipynb) | nothing (runs the sweep, about 1 minute) | in the notebook |
+| M5 (Walmart) inventory: learning curves and held-out profit | [`m5_walmart.ipynb`](notebooks/m5_walmart.ipynb) | nothing (trains the methods, 1 to 3 minutes) | in the notebook |
+
+The Bregman divergence and combined figures have no notebook: `python tune.py --plot-only` redraws them
+from the saved CSVs in `results/tuned/`.
+
 ## Problem setup
 
 All problems minimize discounted **cost** with γ = 0.9, and learners only see sampled
@@ -85,7 +100,7 @@ src/ie692_rl/
     bregman_spmd/         1. SPMD with three Bregman divergences
     true_online_td/       2. True Online TD(λ) policy evaluation
     entropy_reg_spmd/     3. Entropy-regularized SPMD
-notebooks/                baseline runner, entropy-regularized SPMD study, TD comparison
+notebooks/                baseline runner, entropy-regularized SPMD, TD comparison, M5 inventory
 tests/                    pytest suite
 ```
 
