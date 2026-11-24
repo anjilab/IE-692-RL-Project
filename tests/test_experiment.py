@@ -191,8 +191,10 @@ def test_unimplemented_divergences_are_skipped(
 def test_combinations_and_building() -> None:
     spec = method_spec(CONFIG, "entropy_reg_annealed", "GridWorld")
     combos = spec.combinations()
-    assert len(combos) == 27
-    assert len(set(combos)) == 27
+    expected = math.prod(len(values) for values in spec.grid.values())
+    assert expected > 1
+    assert len(combos) == expected
+    assert len(set(combos)) == expected
     method = build_method(spec, combos[0])
     assert isinstance(method.estimator, TOMC)
     assert isinstance(method.divergence, KL)

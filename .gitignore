@@ -31,3 +31,10 @@ policy_evaluation_results_200k/
 qa_prep.md
 results_notebook/
 IMG_8705.jpg
+
+# scratch notes
+/tmp/
+
+# regenerated results
+results/param_sweep/
+full_runs
