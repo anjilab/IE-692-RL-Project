@@ -78,3 +78,36 @@ its Bregman divergence as objects. The baseline is `TOMC` + `KL`, and each enhan
 3. **Entropy-regularized SPMD** (`enhancements/entropy_reg_spmd/`): `tau > 0` adds τ·Σ π log π to the
    sampled costs and uses the closed-form KL step π ∝ π^{1/(1+ητ)} exp(−ηQ/(1+ητ)); `AnnealedTau`
    gives τ_k = τ₀/(k+1). Config methods: `entropy_reg`, `entropy_reg_annealed`.
+
+### Reproducibility
+
+## For policy evaluation charts.
+
+Compare **TOMC, TD(0), TD(λ), and True Online TD(λ)** within the KL-SPMD policy optimization
+loop on Blackjack and GridWorld.
+
+**1. Generate the experiment results**
+
+Run both commands from the project root:
+
+```bash
+# Tabular policy evaluation, including the TOMC baseline
+python tune.py --config configs/td_spmd.cfg --output results/td_spmd
+
+# Linear-feature TD policy evaluation
+python tune.py --config configs/td_spmd_linear.cfg --output results/td_spmd_linear
+```
+
+The linear-feature comparison reuses the TOMC baseline from the tabular results, so both result
+directories are required.
+
+**2. Generate the charts**
+
+Open [`notebooks/td_evaluation_viz.ipynb`](notebooks/td_evaluation_viz.ipynb), select the project's
+Python environment, and run all cells. The notebook reads the saved results and produces:
+
+- Policy evaluation error curves.
+- Learned-policy optimality gap curves.
+
+Curves show the mean across 20 test seeds, with bands representing ±1 standard error. Figures and
+CSV tables are saved to `results/td_evaluation_updated/`.
