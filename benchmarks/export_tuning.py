@@ -1,10 +1,15 @@
-"""Write the M = 1 part of results/param_sweep/scale_0.1 (the 10% sweep, 100 seeds) as a tuning.csv that
+r"""Write the M = 1 part of results/param_sweep/scale_0.1 (the 10% sweep, 100 seeds) as a tuning.csv that
 ``tune.py --reuse-tuning`` can read, for the methods baseline and entropy_reg.
 
     .venv/bin/python benchmarks/export_tuning.py
-    .venv/bin/python tune.py --reuse-tuning --methods baseline entropy_reg --output results/full_runs
+    .venv/bin/python tune.py --reuse-tuning --selection exact_gap --methods baseline entropy_reg \
+        --output results/full_runs
+
+The sweep records only the exact gap, so ``--selection exact_gap`` is required: the columns of the
+certified bounds are NaN, and the default ``gap_lower`` selection then finds no eligible combination.
 """
 
+import math
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -37,6 +42,9 @@ def main() -> None:
                 "min_updates": min(r["updates"] for r in runs),
                 "mean_final_gap": mean,
                 "standard_error": se,
+                "mean_gap_lower": math.nan,  # not computed by the sweep
+                "gap_lower_standard_error": math.nan,
+                "mean_gap_upper": math.nan,
             }
         )
     output = ROOT / "results" / "full_runs"
