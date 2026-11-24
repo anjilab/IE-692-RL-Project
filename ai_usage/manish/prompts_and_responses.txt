@@ -1,0 +1,3205 @@
+PROMPTS AND AI-GENERATED OUTPUT (SELECTED)
+Manish Dhakal, IE 692 course project (Group 5)
+
+Tool: Claude Code (Anthropic), VS Code extension. Models: Claude Opus 5 and Claude Opus 5.5, as marked.
+Extracted from the saved session transcripts. Prompts are verbatim, including typos. Each response is the AI's
+final message for that prompt, verbatim; its progress messages and tool output are left out. Code is the code the
+AI wrote for that prompt; where several files were written, the main one is shown. Only local folder names and
+email addresses were edited. See AI_USAGE.md for the summary.
+
+Numbers in early entries were measured on early code and settings. Some were corrected later, so they are not all
+the final results.
+
+
+####################################################################################################
+A. PROPOSAL AND UNDERSTANDING THE METHOD
+####################################################################################################
+
+====================================================================================================
+[1] 2026-09-15 13:56 ET | proposal session | Claude Opus 5
+====================================================================================================
+
+PROMPT:
+okay what are the options for the enhacements?
+
+RESPONSE:
+The handout gives a non-exhaustive list; you need to pick **three distinct ones** (or propose your own). Here's what's listed, with a note on what each actually involves:
+
+## Policy evaluation enhancements (vs. baseline On-Policy Monte Carlo)
+
+| Enhancement | What it is | Effort / notes |
+|---|---|---|
+| **Importance-sampling OMC** | Evaluate a target policy using trajectories from a different behavior policy, reweighting returns by likelihood ratios (ordinary or weighted IS). | Low–medium. Natural to test variance blowup on Blackjack. |
+| **TD learning** | Bootstrapped updates instead of full-return MC; tune step size, mixing length (how many steps before you start recording / n-step), and add linear function approximation. | Medium. Three tunable knobs map directly onto the required 3×3 grid search. Function approximation is the interesting part on 10×10 GridWorld. |
+| **OMC with dynamic exploration time** | Adaptively choose how long each episode is rolled out / how exploration is scheduled rather than fixing it. Ref: [arXiv 2512.06244 §3.2](https://arxiv.org/pdf/2512.06244). | Medium; requires reading a recent paper, but instructor-endorsed. |
+
+## Policy optimization enhancements (vs. baseline SPMD)
+
+| Enhancement | What it is | Effort / notes |
+|---|---|---|
+| **SPMD with three Bregman divergences** | Same algorithm, swap the proximal term: Euclidean² (projected gradient), KL (softmax/exponentiated), Tsallis entropy (sparse policies). | Low–medium. Counts as *one* enhancement, not three. Very natural comparison plot. |
+| **Stochastic Policy Dual Averaging** | Dual-averaging variant of policy mirror descent — accumulates gradients rather than stepping from the current iterate; again with three divergences. Ref: [arXiv 2211.16715, Alg. 3 §4](https://arxiv.org/pdf/2211.16715). | Medium. Overlaps somewhat with the Bregman-SPMD item — picking both risks the "minor overlap" rubric hit unless you frame the comparison carefully. |
+| **Block SPMD** | Update only a block (subset) of states per iteration, cutting per-iteration observation cost. Ref: [arXiv 2201.05756, Alg. 2 §4](https://arxiv.org/pdf/2201.05756). | Medium. Interesting in GridWorld (100 states) where full sweeps are expensive; the "observations per iteration" metric directly rewards this. |
+| **Compare against PPO** | Run [CleanRL's ppo.py](https://github.com/vwxyzjn/cleanrl/blob/master/cleanrl/ppo.py) on your envs as a deep-RL baseline. | Low implementation effort (existing code), but you'll need to wrap your envs in a Gymnasium interface and explain fairness of comparison (observations vs. gradient steps). |
+
+## Your own ideas
+Explicitly encouraged — "be creative and suggest their own enhancements or test on different environments," and discuss scope with the instructor. Plausible self-proposed options in the spirit of the course: variance-reduced policy gradients (baselines / control variates), entropy-regularized SPMD, adaptive step sizes, natural policy gradient, or a **practical real-data MDP** (up to 10 bonus pts).
+
+## Choosing a good trio
+The Design rubric rewards **distinct** and **appropriately scoped** enhancements. A balanced default that avoids overlap and covers both units:
+1. **TD learning with function approximation** (evaluation)
+2. **SPMD with three Bregman divergences** (optimization)
+3. **Block SPMD** *or* **PPO comparison** (optimization — one algorithmic, one empirical baseline)
+
+Avoid pairing SPMD-Bregman with SPDA-Bregman as two of your three unless the third is clearly in a different category — that's the most likely "overlap" flag.
+
+====================================================================================================
+[2] 2026-09-18 16:24 ET | proposal session | Claude Opus 5
+====================================================================================================
+
+PROMPT:
+can you check the validity of the enhancement?
+
+RESPONSE:
+**Verdict: it's valid** — mathematically correct, directly comparable to the baseline (τ = 0 recovers SPMD exactly), on a different axis from your teammates' enhancements, and — this is the strongest point — it targets exactly the difficulty the course text identifies for the *online* model the project requires. Three things to tighten, in order of importance.
+
+## 1. The motivation is right, but the textbook makes it more precisely than "mode collapse"
+Section 2.3.1 (p. 61–62) says online policy evaluation needs
+$$\min_{a\in\mathcal A}\pi_k(a\mid s) > 0 \qquad (2.3.5)$$
+"since otherwise one would collect no information about certain $(s,a)$ pairs. Unfortunately, this condition eventually fails as the policy converges to the set of optimal policies." And §2.3 opens with: "we focus on the unregularized case with $h=0$, for which online policy optimization appears to be particularly challenging" — i.e. the book itself implies regularization is the easy way out, then studies the hard case with importance sampling (§2.3.2) and value truncation (§2.3.3).
+
+So your enhancement is *the* natural textbook-grounded fix. I'd swap "mode collapse" (GAN vocabulary) for a citation of (2.3.5), and add the quantitative hook: with KL step + entropy regularizer, the fixed point is $\pi \propto \exp(-Q/\tau)$, so $\min_a \pi(a\mid s) \ge \exp(-(Q_{\max}-Q_{\min})/\tau)/|\mathcal A|$ — an explicit exploration floor you can measure. That turns the hypothesis into something testable: plot $\min_{s,a}\pi_k(a\mid s)$ and the fraction of GridWorld states visited, per iteration, against τ.
+
+One nuance: KL-SPMD iterates are never *exactly* zero (multiplicative update), so the "collapse" is numerical — probabilities like $10^{-8}$ that get no samples under a finite observation budget. Say that, or a careful reader will object.
+
+## 2. Which $Q$ goes into the update — decide and state it
+In the textbook (2.1.14) the regularized $Q^\pi$ *includes* $h(\pi(\cdot|s_t))$ in the per-step cost, and it's that $\widetilde Q$ that enters (2.2.21). Your description just says $\widehat Q$. Two options, both defensible:
+- **Textbook-faithful:** OMC accumulates $c(s_t,a_t) + \tau\sum_a \pi(a|s_t)\log\pi(a|s_t)$. This is what the theory (Prop. 2.5 rate, stepsize $\eta_k = 4/[\mu(k+1)]$) applies to.
+- **Proximal-only:** unregularized $\widehat Q$, entropy penalty only in the mirror step. Simpler, but it's a different algorithm and the convergence results don't cover it.
+
+Pick the first unless there's a reason not to; either way, one sentence in the implementation sketch.
+
+## 3. Scope — "a few lines" is a rubric risk
+The Design rubric drops to 80–90% for "limited scope in 1 enhancement," and your own text advertises the change as a few lines. Cheap ways to make it a real study rather than a flag:
+- **Anneal τ**: $\tau_k \to 0$ (e.g. $\tau_k = \tau_0/(k+1)^{p}$) so you keep early exploration but converge to the *unregularized* optimum, removing the bias you flag in the last sentence. Compare fixed vs. annealed.
+- Use the textbook stepsize schedule tied to $\mu=\tau$ rather than a free $\eta_t$, so tuning connects to Prop. 2.5.
+- Report the exploration-floor / coverage metrics from point 1 alongside the required $V^{\pi_t}(s_0)$ and observation-count plots.
+
+Minor: Prop. 2.5's sample-complexity improvement is proved under the **generative** model (§2.2.3), not online — so if you cite it, cite it as a hypothesis for the online case, not a guarantee.
+
+Want me to fold points 1–3 into the block (Motivation, Implementation sketch, Parameters), keeping your current τ/π_t notation?
+
+====================================================================================================
+[3] 2026-09-18 16:31 ET | proposal session | Claude Opus 5
+====================================================================================================
+
+PROMPT:
+i want to know the mathematical correctness of the policy
+
+RESPONSE:
+The update is **correct**. Here's the derivation, so you can put it in the report or defend it in the Q&A.
+
+## Setup (textbook eq. 2.2.21 with $h = \tau\,\omega$)
+
+Per state $s$, with $Q \equiv \widehat Q(s,\cdot)$, $p \equiv \pi(\cdot\mid s)$, $p_k \equiv \pi_k(\cdot\mid s)$, negative entropy $\omega(p) = \sum_a p_a \log p_a$, and KL Bregman divergence $D(p \,\|\, p_k) = \sum_a p_a \log\frac{p_a}{p_{k,a}}$:
+
+$$
+p_{k+1} = \arg\min_{p \in \Delta_{|\mathcal A|}}\; \eta\Big[\langle Q, p\rangle + \tau\,\omega(p)\Big] + D(p\,\|\,p_k).
+$$
+
+## Solve via Lagrangian
+
+The objective is strictly convex on the simplex, so the KKT point is the unique minimizer. Add multiplier $\lambda$ for $\sum_a p_a = 1$ and differentiate w.r.t. $p_a$:
+
+$$
+\eta Q_a + \eta\tau(\log p_a + 1) + (\log p_a - \log p_{k,a} + 1) + \lambda = 0.
+$$
+
+Collect the $\log p_a$ terms:
+
+$$
+(1 + \eta\tau)\log p_a = \log p_{k,a} - \eta Q_a - (1 + \eta\tau + \lambda).
+$$
+
+Divide by $1+\eta\tau$ and exponentiate; the constant becomes the normalizer:
+
+$$
+\boxed{\;p_{k+1,a} \;\propto\; p_{k,a}^{\frac{1}{1+\eta\tau}}\;\exp\!\Big(-\frac{\eta\,Q_a}{1+\eta\tau}\Big)\;}
+$$
+
+which is exactly your displayed formula. The positivity constraint $p_a \ge 0$ is inactive because the log-barrier in $\omega$ and $D$ push the solution strictly inside the simplex, so the KKT solution is feasible.
+
+## Sanity checks
+- **$\tau = 0$:** exponent on $p_k$ is 1, denominator is 1 → $p_{k+1} \propto p_k \exp(-\eta Q)$, the textbook's unregularized update (2.2.3). ✓
+- **Sign:** $Q$ is a *cost*, so mass shifts toward small $Q_a$. ✓ (If your code stores rewards, flip the sign.)
+- **$\tau \to \infty$:** exponent on $p_k \to 0$ and the $Q$ term vanishes → $p_{k+1} \to$ uniform. Max-entropy limit, as expected.
+- **Fixed point:** setting $p_{k+1} = p_k = p^\star$ gives $p^\star_a \propto \exp(-Q_a/\tau)$ — the Boltzmann/soft-greedy policy, the known optimum of entropy-regularized MDPs. This is also where the exploration floor $\min_a p^\star_a \ge \exp(-(Q_{\max}-Q_{\min})/\tau)/|\mathcal A|$ comes from.
+- **Equivalence to the textbook's form:** the book writes the entropy case as $h(p) = \mu\,\mathrm{KL}(p\,\|\,\pi_0)$ with $\pi_0$ uniform. Since $\mathrm{KL}(p\,\|\,\text{unif}) = \omega(p) + \log|\mathcal A|$, the two differ by a constant that doesn't affect the argmin, so your $\tau$ is the book's $\mu$ and the update is identical.
+
+## Two things the formula doesn't settle (implementation choices, not errors)
+1. **Which $Q$.** In the textbook, the regularized $Q^\pi$ (2.1.14) includes $\tau\,\omega(\pi(\cdot\mid s_t))$ in each step's cost, and that is what enters the update. If your OMC estimates the *unregularized* $Q$, the update above is still a well-defined algorithm but its fixed point is no longer the regularized optimum and Prop. 2.5 doesn't apply. State which one you use.
+2. **Numerics.** Compute in log-space: $\log p_{k+1,a} = \frac{\log p_{k,a} - \eta Q_a}{1+\eta\tau} - \text{logsumexp}(\cdot)$. Otherwise $p_{k,a}^{1/(1+\eta\tau)}$ underflows once probabilities get small — which is precisely the regime your enhancement is about.
+
+The only actual defect in the block is the notation mix I flagged earlier: line 162 has $\pi_{t+1}$ on the left and line 165 has $\pi_k$ on the right.
+
+====================================================================================================
+[4] 2026-11-10 15:55 ET | proposal session | Claude Opus 5
+====================================================================================================
+
+PROMPT:
+how can we setup the hypothesis that exploration is going to help? give me suggestion on hypothesis setup
+
+RESPONSE:
+Good timing to pin this down — the strongest version makes the hypothesis a **causal chain with measurable intermediates**, not a single "τ > 0 is better" claim. If the endpoint result comes out flat, you can still show *where* the chain broke, which is what earns "explainable results" rather than "unexplained phenomena."
+
+## 1. State the chain, not the conclusion
+
+> τ > 0 → higher $\min_a \pi_k(a\mid s)$ → more distinct $(s,a)$ pairs sampled per observation → lower error in $\widehat Q$ at rarely-visited states → better improvement direction → faster decrease in unregularized $V^{\pi_k}(s_0)$ per observation.
+
+Each arrow is a separate measurable claim. Write them as H1–H5 in the report's introduction and answer each one in results.
+
+## 2. You have ground truth — use it
+
+Both environments are small and tabular, so you can compute exact $Q^{\pi_k}$ by solving $(I - \gamma P^{\pi_k})^{-1}$ at any iterate. That turns link 3 from a guess into a measurement:
+
+| Link | Metric |
+|---|---|
+| Exploration floor | $\min_{s,a}\pi_k(a\mid s)$, and policy entropy averaged over visited states |
+| Coverage | distinct states (and $(s,a)$ pairs) visited in the last $N$ observations |
+| Estimation | $\|\widehat Q_k - Q^{\pi_k}\|_\infty$, and the same restricted to the *least-visited* decile of $(s,a)$ |
+| Outcome | unregularized $V^{\pi_k}(s_0)$ vs. **cumulative observations** |
+
+Plot the x-axis in observations, never iterations — different τ consume different amounts per iteration, and the handout asks for observation counts anyway.
+
+Quantitative bonus: your fixed point $\pi \propto \exp(-Q/\tau)$ predicts a floor $\min_a \pi \ge \exp(-\Delta/\tau)/|\mathcal A|$ with $\Delta = \max_a Q - \min_a Q$. Measure $\Delta$ from your exact $Q$ and check the observed floor against the predicted one. Theory predicting a number you then measure is the most convincing thing you can put in a results section.
+
+## 3. The control that actually isolates exploration
+
+τ does two things at once: it changes the objective *and* it keeps the policy spread out. To attribute the benefit to exploration you need a condition that gets the second without the first:
+
+**Behavior-policy mixing.** Keep baseline (unregularized) SPMD, but collect samples from $\tilde\pi_k = (1-\varepsilon)\pi_k + \varepsilon\,\text{unif}$, with ε chosen so the exploration floor *matches* the entropy-regularized run's floor at each iteration. The update target is unchanged.
+
+- If mixing ≈ entropy-reg → the benefit is exploration. Hypothesis confirmed cleanly.
+- If entropy-reg > mixing → something else is doing the work (the regularized objective's strong convexity, smoother iterates).
+- If neither beats baseline → exploration wasn't the binding constraint here.
+
+All three outcomes are publishable results for your report. This is the single addition that would most strengthen the section.
+
+## 4. Build in a negative control
+
+You already have one: **blackjack**. Episodes are 2–3 steps, the state space is tiny, and the dealer's randomness forces coverage regardless of policy — exploration should *not* be the bottleneck. A differential prediction ("large effect on GridWorld, negligible on blackjack") is much harder to explain away as noise or tuning luck than a single positive result.
+
+## 5. Pre-register what would falsify it
+
+Write these down *before* running the full budget:
+
+- Baseline SPMD's floor $\min_{s,a}\pi_k$ never drops below ~$10^{-3}$ within the budget → there was never an exploration problem; τ can only hurt. (Plausible: KL-SPMD from uniform init decays geometrically but may not collapse within your budget. Check this early with a cheap pilot run.)
+- Coverage is ~100% for all τ by mid-run → same conclusion.
+- $\widehat Q$ error at rare $(s,a)$ is no lower under τ > 0 → the mechanism is broken even if the endpoint looks better, meaning the gain came from somewhere else.
+
+Stating these up front and then reporting that one of them fired is a *better* result than a clean win with no mechanism.
+
+## 6. Hygiene that decides whether any of this is believable
+
+- **Seeds**: 10–20 per configuration, plot median with IQR band. One seed per curve is the most common way these comparisons become meaningless.
+- **Fair tuning**: run the handout's grid search (3 params × 3 values, 5–10% budget) *independently for baseline and for each τ condition*. Comparing a tuned enhancement against an untuned baseline is the easiest criticism to make in the Q&A.
+- **Matched budget**: identical total observations across conditions, including whatever the behavior-policy mixing spends.
+- **GridWorld check**: confirm your hazard/goal layout actually makes premature greediness costly (a trap that's irrecoverable). If the greedy route reaches a goal fine, there's nothing for exploration to fix and the whole hypothesis is untestable in your environment.
+
+If you want, I can draft H1–H5 as the introduction paragraph for the report, or sketch the logging interface (what each run records per iteration) so the plots fall out of the data you collect.
+
+====================================================================================================
+[5] 2026-11-21 23:23 ET | question-and-answer session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+In PMD how do you go from the gradient operation to pi updates?
+
+RESPONSE:
+It takes three steps: linearize the cost with Q as the gradient, add a "stay close" penalty, then solve that small problem in closed form at each state. Each closed-form solution is one line of your code.
+
+## Step 1: Q is the gradient
+The **performance difference lemma** says exactly how much the cost changes when you switch from π_t to a new policy π:
+
+$$V^{\pi}(\rho) - V^{\pi_t}(\rho) = \frac{1}{1-\gamma}\,\mathbb{E}_{s\sim d^{\pi}}\Big[\big\langle Q^{\pi_t}(s,\cdot),\ \pi(\cdot|s) - \pi_t(\cdot|s)\big\rangle\Big]$$
+
+So at each state, the change in cost is approximately linear in π, with slope Q^{π_t}(s, ·). Lowering the cost means putting probability on actions with small Q. That inner product is the **gradient term**.
+
+## Step 2: minimize the linear term, but stay close
+Minimizing ⟨Q, p⟩ by itself would put all probability on argmin Q, which is greedy and over-trusts a noisy Q estimate. Mirror descent adds a penalty for moving far from the current policy. At **each state s** separately:
+
+$$\pi_{t+1}(\cdot|s) = \arg\min_{p\,\in\,\Delta}\ \underbrace{\eta\,\langle Q(s,\cdot),\, p\rangle}_{\text{go downhill}} \;+\; \underbrace{D\big(p,\ \pi_t(\cdot|s)\big)}_{\text{don't move too far}}$$
+
+Here Δ means p ≥ 0 and Σₐ p(a) = 1. The step size η sets the balance between the two terms. That's all of PMD. Choosing D turns it into a specific update.
+
+## Step 3a: KL divergence → multiplicative update
+Use D(p, π_t) = Σₐ p(a) log(p(a)/π_t(a)). Add a Lagrange multiplier λ for Σ p = 1 and set the derivative with respect to p(a) to 0:
+
+$$\eta\,Q(s,a) + \log\frac{p(a)}{\pi_t(a|s)} + 1 + \lambda = 0$$
+
+$$\Rightarrow\quad p(a) = \pi_t(a|s)\,e^{-\eta Q(s,a)}\cdot e^{-1-\lambda}$$
+
+The last factor is a constant that makes the probabilities sum to 1, so
+
+$$\boxed{\ \pi_{t+1}(a|s) = \frac{\pi_t(a|s)\,e^{-\eta Q(s,a)}}{\sum_b \pi_t(b|s)\,e^{-\eta Q(s,b)}}\ }$$
+
+p ≥ 0 holds automatically, because exponentials are positive. That's why the KL version needs no projection.
+
+**In code** ([pmd.py](pmd.py)), the same formula is written in log space:
+```python
+log_pi_k_next = (np.log(pi_k + 1e-8) + step_size * q_k) / (1 + step_size * tau)   # log π_t − ηQ
+log_pi_k_next -= np.max(log_pi_k_next, axis=1, keepdims=True)                       # numerical stability
+pi_k_next = np.exp(log_pi_k_next)
+pi_k_next /= np.sum(pi_k_next, axis=1, keepdims=True)                               # normalize
+```
+`run_pmd` treats Q as a reward and maximizes, so it uses **+ηQ**. `kl_spmd.py` passes in **−Q** ("The team's Q holds costs, while run_pmd maximizes, so negate Q"), which gives the −ηQ above.
+
+## Step 3b: Euclidean → projected step
+Use D(p, π_t) = ½‖p − π_t‖². The derivative condition gives p(a) = π_t(a) − ηQ(s, a) − θ, but that can be negative. Adding the p ≥ 0 constraints (the KKT conditions) gives
+
+$$\pi_{t+1}(a|s) = \max\big(\pi_t(a|s) - \eta Q(s,a) - \theta,\ 0\big)$$
+
+where the threshold θ is chosen so the result sums to 1. That's a **projection onto the simplex**, and it's what the team's `mirror_step` computes ([utils.py:47-60](../utils.py#L47-L60)): `proposal = policy - step_size * q`, then a sorting procedure to find `threshold`, then `np.maximum(proposal - threshold, 0)`. The `max(·, 0)` is why the Euclidean update can set an action's probability to exactly 0.
+
+## Step 3c: KL plus entropy (your enhancement)
+Add an entropy bonus to the objective: η[⟨Q, p⟩ + τ Σₐ p log p] + KL(p, π_t). The same derivative calculation gives
+
+$$(1+\eta\tau)\log p(a) = \log \pi_t(a|s) - \eta\,Q_\tau(s,a) + \text{const}$$
+
+$$\Rightarrow\quad \pi_{t+1}(a|s) \;\propto\; \pi_t(a|s)^{\frac{1}{1+\eta\tau}}\ \exp\!\Big(\frac{-\eta\,Q_\tau(s,a)}{1+\eta\tau}\Big)$$
+
+This is the `/ (1 + step_size * tau)` in the code. Raising π_t to a power below 1 pulls the policy back toward uniform at every step, so it never becomes fully deterministic. Here Q_τ is the **regularized** Q, estimated with `EntropyCostEnv` adding τ Σ π log π to each sampled cost.
+
+## In summary
+| Step | What it is |
+|---|---|
+| Gradient | Q^{π_t}(s, ·), estimated from rollouts |
+| Subproblem | min over p of η⟨Q, p⟩ + D(p, π_t), at each state |
+| KL solution | π_t · exp(−ηQ), normalized |
+| Euclidean solution | Project π_t − ηQ onto the simplex |
+| KL + entropy | π_t^{1/(1+ητ)} · exp(−ηQ_τ/(1+ητ)), normalized |
+
+Each SPMD iteration estimates Q and then applies one of these closed-form updates to every state at once.
+
+####################################################################################################
+B. FIRST IMPLEMENTATION AND VALIDATION
+####################################################################################################
+
+====================================================================================================
+[6] 2026-11-06 16:10 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+Can you generate some test examples to test my policy mirror descent?
+
+RESPONSE:
+I added 19 tests in [test_pmd.py](test_pmd.py), and your current `run_pmd` **passes 18 of them**. The one failure is how it handles actions with zero probability. Run them from `project/` with `python test_pmd.py`; the script reads the saved notebook, so save before running.
+
+## The failing test
+`test_zero_probability_action_stays_zero` fails because of the `+ 1e-8` in `np.log(pi_k + 1e-8)`. In exact PMD, an action with probability 0 stays at 0, because the update multiplies by `pi_k`. Your version gives it a small starting weight, so a large enough Q gap can bring it back.
+
+With `pi = [0, 1]` and step size 1:
+
+| Q gap | New probability of the zero-probability action |
+|---|---|
+| 5 | 0.000001 |
+| 15 | 0.03 |
+| 19 | 0.64 |
+| 25 | 0.999 |
+
+**Your call:** this isn't necessarily a bug. For SPMD, the floor can act as useful exploration: it lets an action recover after noisy Q estimates have pushed its probability to 0.
+- **If you keep it:** delete this test or change it to expect the floor, and mention the floor in your report as a deliberate deviation.
+- **If you want the exact update:** use `np.log(pi_k)` under `np.errstate(divide="ignore")`. Zero-probability actions then get `-inf` and stay at 0, but a row of `pi_k` with `-inf` and an infinite `q_k` would need care.
+
+## What the tests cover
+- **Output format:** return shape, valid probability rows, shape mismatches, and inputs left unmodified.
+- **Hand-computed examples:** two actions, three actions, and two states updating independently.
+- **Update properties:**
+  - A zero step size or constant Q leaves the policy unchanged.
+  - Adding a constant to a state's Q values changes nothing.
+  - Expected Q never decreases.
+  - Two steps equal one combined step.
+  - A large step size becomes greedy.
+  - The result maximizes the KL objective.
+- **Edge cases:** huge Q values and zero-probability actions.
+- **Full PMD runs:** a two-state MDP with a known answer and five random MDPs, all with exact Q and γ = 0.9. Each converges to the optimal values, and values never drop between iterations.
+
+## Can the tests catch bugs?
+Yes: I broke copies of your function in 8 ways, and each one caused new failures. The breaks were a flipped sign, dropping the prior policy, removing normalization, normalizing over states, removing the max subtraction, subtracting a global max, ignoring the step size, and removing the `return`.
+
+## Things to keep in mind
+- **Your `return` fix:** the version I first read had no `return`, but you added it while I was working. Without it, 17 of the 19 tests fail.
+- **Sign convention:** the tests assume Q is a reward to maximize, which matches your `+ step_size * q_k`. If your GridWorld or blackjack code uses costs, the sign needs flipping.
+- **Not covered yet:** the entropy-regularized update your notebook is named after isn't implemented, and neither is sampled (stochastic) Q, so neither is tested. These tests only cover the plain KL step.
+- **Docstring:** it says "Projected Mirror Descent", but it should say "Policy Mirror Descent". It's also missing a `Returns` section.
+- **Citing this work:** your project PDF says AI use must be cited, and that an AI link or screenshot without the prompts and output counts as plagiarism. If you submit these tests, include this conversation's prompts and output.
+
+----------------------------------------------------------------------------------------------------
+GENERATED CODE: test_pmd.py
+----------------------------------------------------------------------------------------------------
+"""Tests for run_pmd, the KL policy mirror descent step (rewards, so Q is maximized).
+
+    pi_{k+1}(a|s)  proportional to  pi_k(a|s) * exp(step_size * Q(s,a))
+
+Run from this folder with:  python test_pmd.py
+run_pmd is loaded from the notebook, so save the notebook before running.
+Set PMD_NOTEBOOK to test a different notebook.
+"""
+import json
+import os
+import sys
+import traceback
+from pathlib import Path
+
+import numpy as np
+
+NOTEBOOK = Path(
+    os.environ.get(
+        "PMD_NOTEBOOK", Path(__file__).parent / "entropy_regularized_SPMD.ipynb"
+    )
+)
+GAMMA = 0.9  # discount factor from the project spec
+ATOL = 1e-6  # loose enough to allow for the 1e-8 added inside log()
+
+
+def load_run_pmd(notebook_path):
+    """Execute the notebook cell that defines run_pmd and return the function."""
+    cells = json.loads(notebook_path.read_text())["cells"]
+    namespace = {}
+    for cell in cells:
+        source = "".join(cell["source"])
+        if cell["cell_type"] == "code" and "def run_pmd" in source:
+            exec(source, namespace)
+            return namespace["run_pmd"]
+    raise RuntimeError(f"No run_pmd definition found in {notebook_path}")
+
+
+run_pmd = load_run_pmd(NOTEBOOK)
+
+
+def random_policy(rng, n_states, n_actions):
+    return rng.dirichlet(np.ones(n_actions), size=n_states)
+
+
+def kl_objective(p, pi, q, step_size):
+    """The per-state objective that the PMD step maximizes."""
+    return step_size * (q @ p) - np.sum(p * np.log(p / pi))
+
+
+# ---------- Output format ----------
+
+def test_returns_array_with_input_shape():
+    pi = np.full((3, 4), 0.25)
+    result = run_pmd(pi, np.zeros((3, 4)), 1.0)
+    assert isinstance(result, np.ndarray), f"expected ndarray, got {type(result).__name__}"
+    assert result.shape == pi.shape
+
+
+def test_rows_are_probability_distributions():
+    rng = np.random.default_rng(0)
+    pi = random_policy(rng, 20, 5)
+    result = run_pmd(pi, rng.normal(size=(20, 5)), 0.7)
+    assert np.all(result >= 0)
+    np.testing.assert_allclose(result.sum(axis=1), 1.0, atol=1e-12)
+
+
+def test_shape_mismatch_raises():
+    try:
+        run_pmd(np.full((2, 2), 0.5), np.zeros((2, 3)), 1.0)
+    except AssertionError:
+        return
+    raise AssertionError("mismatched shapes were accepted")
+
+
+def test_inputs_are_not_modified():
+    rng = np.random.default_rng(1)
+    pi, q = random_policy(rng, 4, 3), rng.normal(size=(4, 3))
+    pi_before, q_before = pi.copy(), q.copy()
+    run_pmd(pi, q, 1.0)
+    np.testing.assert_array_equal(pi, pi_before)
+    np.testing.assert_array_equal(q, q_before)
+
+
+# ---------- Hand-computed examples ----------
+
+def test_two_actions_by_hand():
+    # Weights 0.5 * 2 and 0.5 * 1 normalize to 2/3 and 1/3.
+    pi = np.array([[0.5, 0.5]])
+    q = np.array([[1.0, 0.0]])
+    result = run_pmd(pi, q, np.log(2))
+    np.testing.assert_allclose(result, [[2 / 3, 1 / 3]], atol=ATOL)
+
+
+def test_three_actions_by_hand():
+    # Weights 0.2 * 1, 0.3 * 2 and 0.5 * 3 are 0.2, 0.6 and 1.5, summing to 2.3.
+    pi = np.array([[0.2, 0.3, 0.5]])
+    q = np.log([[1.0, 2.0, 3.0]])
+    result = run_pmd(pi, q, 1.0)
+    np.testing.assert_allclose(result, [[0.2 / 2.3, 0.6 / 2.3, 1.5 / 2.3]], atol=ATOL)
+
+
+def test_states_update_independently():
+    # Row 0 repeats the two-action example; row 1 prefers the other action.
+    pi = np.full((2, 2), 0.5)
+    q = np.array([[1.0, 0.0], [0.0, 1.0]])
+    result = run_pmd(pi, q, np.log(2))
+    np.testing.assert_allclose(result, [[2 / 3, 1 / 3], [1 / 3, 2 / 3]], atol=ATOL)
+
+
+# ---------- Properties of the update ----------
+
+def test_zero_step_size_keeps_policy():
+    rng = np.random.default_rng(2)
+    pi = random_policy(rng, 5, 4)
+    result = run_pmd(pi, rng.normal(size=(5, 4)), 0.0)
+    np.testing.assert_allclose(result, pi, atol=ATOL)
+
+
+def test_constant_q_keeps_policy():
+    rng = np.random.default_rng(3)
+    pi = random_policy(rng, 5, 4)
+    q = np.repeat(rng.normal(size=(5, 1)), 4, axis=1)
+    np.testing.assert_allclose(run_pmd(pi, q, 2.0), pi, atol=ATOL)
+
+
+def test_adding_a_constant_per_state_changes_nothing():
+    rng = np.random.default_rng(4)
+    pi, q = random_policy(rng, 5, 4), rng.normal(size=(5, 4))
+    shift = rng.normal(size=(5, 1)) * 100
+    np.testing.assert_allclose(run_pmd(pi, q + shift, 0.5), run_pmd(pi, q, 0.5), atol=1e-9)
+
+
+def test_expected_q_does_not_decrease():
+    rng = np.random.default_rng(5)
+    pi, q = random_policy(rng, 50, 6), rng.normal(size=(50, 6))
+    result = run_pmd(pi, q, 0.3)
+    assert np.all((result * q).sum(axis=1) >= (pi * q).sum(axis=1) - 1e-9)
+
+
+def test_two_steps_equal_one_combined_step():
+    rng = np.random.default_rng(6)
+    pi, q = random_policy(rng, 5, 4), rng.normal(size=(5, 4))
+    two_steps = run_pmd(run_pmd(pi, q, 0.4), q, 0.6)
+    np.testing.assert_allclose(two_steps, run_pmd(pi, q, 1.0), atol=ATOL)
+
+
+def test_large_step_size_becomes_greedy():
+    rng = np.random.default_rng(7)
+    pi, q = random_policy(rng, 10, 4), rng.normal(size=(10, 4))
+    result = run_pmd(pi, q, 1e4)
+    np.testing.assert_allclose(result, np.eye(4)[q.argmax(axis=1)], atol=ATOL)
+
+
+def test_update_maximizes_the_kl_objective():
+    rng = np.random.default_rng(8)
+    pi, q = random_policy(rng, 1, 5)[0], rng.normal(size=5)
+    step_size = 0.8
+    best = run_pmd(pi[None], q[None], step_size)[0]
+    best_value = kl_objective(best, pi, q, step_size)
+    for candidate in rng.dirichlet(np.ones(5), size=2000):
+        assert kl_objective(candidate, pi, q, step_size) <= best_value + 1e-6
+
+
+# ---------- Edge cases ----------
+
+def test_huge_q_values_stay_finite():
+    pi = np.full((2, 3), 1 / 3)
+    q = np.array([[1e6, 0.0, -1e6], [1e4, 1e4, 1e4]])
+    result = run_pmd(pi, q, 10.0)
+    assert np.all(np.isfinite(result))
+    np.testing.assert_allclose(result, [[1, 0, 0], [1 / 3, 1 / 3, 1 / 3]], atol=ATOL)
+
+
+def test_zero_probability_action_stays_zero():
+    # The exact update multiplies by pi, so an action at 0 can never come back.
+    pi = np.array([[0.0, 1.0]])
+    q = np.array([[100.0, 0.0]])
+    np.testing.assert_allclose(run_pmd(pi, q, 1.0), [[0.0, 1.0]], atol=ATOL)
+
+
+# ---------- Full PMD runs on small MDPs ----------
+
+def evaluate_policy(pi, transitions, rewards):
+    """Return exact V and Q for a policy. transitions is (S, A, S), rewards is (S, A)."""
+    n_states = rewards.shape[0]
+    p_pi = np.einsum("sa,sat->st", pi, transitions)
+    r_pi = (pi * rewards).sum(axis=1)
+    v = np.linalg.solve(np.eye(n_states) - GAMMA * p_pi, r_pi)
+    return v, rewards + GAMMA * transitions @ v
+
+
+def optimal_values(transitions, rewards, n_iterations=2000):
+    v = np.zeros(rewards.shape[0])
+    for _ in range(n_iterations):
+        v = (rewards + GAMMA * transitions @ v).max(axis=1)
+    return v
+
+
+def run_full_pmd(transitions, rewards, step_size, n_iterations):
+    """Return the final policy and the value function at every iteration."""
+    n_states, n_actions = rewards.shape
+    pi = np.full((n_states, n_actions), 1 / n_actions)
+    history = []
+    for _ in range(n_iterations):
+        v, q = evaluate_policy(pi, transitions, rewards)
+        history.append(v)
+        pi = run_pmd(pi, q, step_size)
+    return pi, np.array(history)
+
+
+def two_state_mdp():
+    """Action 0 stays and action 1 switches. Only staying in state 1 pays (1 per step)."""
+    transitions = np.zeros((2, 2, 2))
+    transitions[0, 0, 0] = transitions[0, 1, 1] = 1.0
+    transitions[1, 0, 1] = transitions[1, 1, 0] = 1.0
+    rewards = np.array([[0.0, 0.0], [1.0, 0.0]])
+    return transitions, rewards
+
+
+def random_mdp(seed, n_states=8, n_actions=4):
+    rng = np.random.default_rng(seed)
+    transitions = rng.dirichlet(np.ones(n_states), size=(n_states, n_actions))
+    return transitions, rng.uniform(size=(n_states, n_actions))
+
+
+def test_two_state_mdp_finds_optimal_policy():
+    transitions, rewards = two_state_mdp()
+    pi, history = run_full_pmd(transitions, rewards, 1.0, 200)
+    # Move to state 1 and stay: V(1) = 1 / (1 - 0.9) = 10 and V(0) = 0.9 * 10 = 9.
+    np.testing.assert_allclose(history[-1], [9.0, 10.0], atol=1e-3)
+    assert pi[0].argmax() == 1 and pi[1].argmax() == 0
+
+
+def test_random_mdps_converge_to_optimal_values():
+    for seed in range(5):
+        transitions, rewards = random_mdp(seed)
+        _, history = run_full_pmd(transitions, rewards, 1.0, 500)
+        v_star = optimal_values(transitions, rewards)
+        np.testing.assert_allclose(history[-1], v_star, atol=1e-3)
+
+
+def test_values_improve_in_every_state_at_every_iteration():
+    for seed in range(5):
+        transitions, rewards = random_mdp(seed)
+        _, history = run_full_pmd(transitions, rewards, 0.5, 200)
+        assert np.all(np.diff(history, axis=0) >= -1e-7)
+
+
+def main():
+    tests = [(n, f) for n, f in globals().items() if n.startswith("test_") and callable(f)]
+    failed = 0
+    for name, test in tests:
+        try:
+            test()
+            print(f"PASS  {name}")
+        except Exception as error:
+            failed += 1
+            location = traceback.extract_tb(error.__traceback__)[-1]
+            summary = " ".join(str(error).split())[:160]
+            print(f"FAIL  {name}\n      {type(error).__name__} at line {location.lineno}: {summary}")
+    print(f"\n{len(tests) - failed}/{len(tests)} tests passed")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+====================================================================================================
+[7] 2026-11-09 22:49 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+lets use entropy regularization there to increase exploration there
+
+RESPONSE:
+Entropy regularization is in, and it does increase exploration, but **it doesn't improve the GridWorld result**. Plain KL (τ = 0) is still the best or tied for best. All 26 non-legacy tests pass; the one failure is still the old zero-probability test.
+
+**Results:**
+- **Exploration rises with τ, as intended.** At τ = 0.001, final policy entropy roughly doubles (0.05 → 0.11), with almost no change in cost: 1.9573 vs. 1.9555 averaged over 5 seeds, at step size 5.
+- **Larger τ costs real performance.** At τ = 0.003 the cost rises to 1.997, about where the team's Euclidean baseline ends up.
+- **Plain KL was already within 0.002 of the optimal cost (1.9533)**, so extra exploration had almost nothing left to improve. Regularization also pulls the policy toward a slightly random optimum, which costs a little on the real objective.
+- **The full run picked a poor step size.** The tuning grid search uses one seed and picked step 20 for τ = 0.001, ending at 1.971. Over 5 seeds, step 20 averages 1.969 with a large spread (±0.016), while step 5 averages 1.957. The team's single-seed tuning can lock in a lucky setting, which is worth mentioning in your report.
+
+**What changed:**
+- [pmd.py](Entropy-Regularized%20SPMD/pmd.py): `run_pmd(pi_k, q_k, step_size, tau=0.0)` now does the entropy-regularized update. With the default `tau=0` it's identical to before. I also fixed the docstring ("Policy" instead of "Projected") and added a `Returns` section.
+- [test_pmd.py](Entropy-Regularized%20SPMD/test_pmd.py): 8 new tests. They include a hand-computed case, convergence to softmax(Q/τ) when Q is held fixed, and full runs that converge to the exact regularized optimum. They catch all three wrong versions of the formula I tried.
+- [gridworld_kl_spmd.py](Entropy-Regularized%20SPMD/gridworld_kl_spmd.py): new `--tau` option, default 0.001. Training rollouts add τ × Σ π log π to each step's cost, and scoring still uses the real GridWorld cost. Each τ writes to its own results folder; `gridworld_kl_tau_0.001_results/` is now there.
+
+```bash
+python "Entropy-Regularized SPMD/gridworld_kl_spmd.py" --tau 0.001
+python "Entropy-Regularized SPMD/gridworld_kl_spmd.py" --tau 0 --step-sizes 5   # plain KL
+```
+
+**Caveats:**
+- The τ sweep and the 5-seed comparisons came from throwaway scripts in my scratchpad and aren't saved in the repo. If you want this table in the report, I can add a seeds script to the folder.
+- Exploration may matter more for blackjack, or with smaller rollout counts, where the Q estimates are noisier. I've only tested GridWorld.
+- Nothing is committed yet.
+
+----------------------------------------------------------------------------------------------------
+GENERATED CODE: pmd.py (run_pmd)
+----------------------------------------------------------------------------------------------------
+def run_pmd(pi_k, q_k, step_size, tau=0.0):
+    """
+    Run one Policy Mirror Descent (PMD) step with KL divergence and optional entropy regularization.
+
+    For each state, solves
+        max_p  step_size * (<q_k, p> + tau * entropy(p)) - KL(p || pi_k)
+    whose solution is
+        pi_next  proportional to  pi_k ** (1 / (1 + step_size * tau)) * exp(step_size * q_k / (1 + step_size * tau)).
+
+    Parameters:
+    pi_k : numpy.ndarray
+        The policy matrix at the kth step, shape (|S|, |A|).
+    q_k : numpy.ndarray
+        The action-value matrix at the kth step, shape (|S|, |A|). Treated as rewards (higher is better).
+        With tau > 0 it should be the entropy-regularized Q of pi_k.
+    step_size : float
+        The step size for the PMD update.
+    tau : float
+        Entropy weight. 0 gives the plain KL update; larger values keep the policy more random.
+
+    Returns:
+    numpy.ndarray
+        The updated policy, shape (|S|, |A|), each row summing to 1.
+    """
+
+    assert pi_k.shape == q_k.shape, "Policy and action-value matrices must have the same shape."
+    assert tau >= 0, "Entropy weight tau must be non-negative."
+
+    log_pi_k_next = (np.log(pi_k + 1e-8) + step_size * q_k) / (1 + step_size * tau)
+
+
+====================================================================================================
+[8] 2026-11-10 11:16 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+lets see if helps more complex gridworld and blackjack task. define specific problems in the entropy guided SPMD.
+
+RESPONSE:
+I tested entropy regularization on two harder problems and with a second, "online" way of sampling. **Overall it doesn't help, even on the problems built to reward exploration.**
+- **τ = 0.001** is about neutral: it's sometimes slightly better than plain KL (τ = 0), but always within run-to-run noise.
+- **τ ≥ 0.01** is worse in nearly every setting.
+
+## The two harder problems
+- **Deceptive GridWorld:** a 12×12 board.
+  - A decoy exit 2 steps from the start ends the episode for a lump cost of 1.
+  - The real goal is 6 steps away, with two hazards blocking the direct approach.
+  - Every step's cost has noise added (standard deviation 1), so Q estimates are noisy.
+  - The best policy reaches the goal and costs 1.198. Settling for the decoy costs 1.334, a **gap of 0.136**.
+- **Full blackjack:** cards 2 to 10, with 10 four times as likely; bust above 21; dealer draws to 17.
+  - 162 states, versus 32 in the team's version.
+  - Each hand starts from a random deal.
+
+## The second sampling mode
+- **Generative (the team's):** rollouts start from every state and every action, so every action gets tried each iteration.
+- **Online (new):** whole episodes start only from the real start state(s) and follow the policy, so anything the policy avoids is never sampled. This is the setting where exploration should matter most.
+
+## Results
+Each number is the gap to the optimal cost (0 means optimal), averaged over 5 test seeds and scored exactly. Each method's step size was tuned on 3 separate seeds.
+
+| Problem, sampling | Euclidean | KL τ=0 | KL τ=0.001 | KL τ=0.01 | KL τ=0.1 |
+|---|---|---|---|---|---|
+| GridWorld, generative | 0.027 | **0.001** | 0.005 | 0.048 | 0.104 |
+| GridWorld, online | **0.014** | 0.022 | 0.015 | 0.052 | 0.109 |
+| Blackjack, generative | **0.000** | 0.046 | **0.000** | 0.016 | 0.010 |
+| Blackjack, online | **0.000** | **0.000** | 0.000 | 0.002 | 0.060 |
+| Deceptive GridWorld, generative | 0.282 | **0.038** | 0.056 | 0.148 | 0.516 |
+| Deceptive GridWorld, online | 0.122 | 0.099 | **0.095** | 0.166 | 0.611 |
+| Full blackjack, generative | 0.005 | 0.001 | **0.0006** | 0.002 | 0.023 |
+| Full blackjack, online | **0.007** | 0.013 | 0.012 | 0.021 | 0.081 |
+
+The full table, with τ = 0.03 and costs at 25% and 50% of each budget, is in `exploration_results.csv`.
+
+**What the table shows:**
+- **Even online, the decoy mostly wins.** On the deceptive GridWorld with online sampling, every method ends near the decoy's 0.136 gap. τ = 0.001 (0.095) and plain KL (0.099) are equal within noise (sd ≈ 0.04). Larger τ makes it worse, because a policy random enough to find the goal also pays for that randomness on every step.
+- **The τ = 0.001 "wins" are within noise.** On full blackjack with generative sampling, it beats plain KL by 0.0005, which is weak evidence from 5 seeds. On team blackjack with generative sampling, plain KL looks bad only because its tuning seeds picked step 20. Earlier tests showed plain KL at step 1 or 5 reaches the exact optimum.
+- **KL beats Euclidean on noisy problems.** On the deceptive GridWorld with generative sampling, Euclidean (0.282) ends up *worse than the decoy*, while plain KL gets to 0.038. Euclidean is best on some of the online settings.
+
+**Why entropy doesn't help here:** a fixed τ trades exploration for a permanently biased policy. With γ = 0.9, only the next 10 or so steps matter much, so a τ large enough to change behavior costs more than the exploration gains.
+
+**What might still help:** shrink τ over the iterations, i.e. explore early and converge to the true optimum late. That's the usual fix in the literature, and it's a small change to the comparison script. Want me to try it?
+
+## Files added to `Entropy-Regularized SPMD/`
+- [hard_problems.py](Entropy-Regularized%20SPMD/hard_problems.py): the two new problems, each with an exact model.
+- [exact_eval.py](Entropy-Regularized%20SPMD/exact_eval.py): exact scoring for all four problems.
+- [estimators.py](Entropy-Regularized%20SPMD/estimators.py): generative and online Q estimation.
+- [compare_exploration.py](Entropy-Regularized%20SPMD/compare_exploration.py): the comparison above. It takes about 11 minutes, and `--quick` runs a 25-second smoke test.
+- [test_hard_problems.py](Entropy-Regularized%20SPMD/test_hard_problems.py): 7 checks, all passing. They compare each exact model against sampled values and validate the online estimator and the entropy wrapper.
+
+**Caveats:**
+- Only 5 test seeds and a coarse step-size grid, so differences under about 0.01 aren't meaningful.
+- The deceptive GridWorld's layout and decoy cost are my design choices; I tuned them so the goal is clearly optimal.
+- The online estimator's rule for unvisited pairs is also mine; it's documented in `estimators.py`.
+- Nothing is committed.
+
+====================================================================================================
+[9] 2026-11-22 00:39 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+Can you validate my entropy regularization in the run_pmd?
+
+RESPONSE:
+Your entropy regularization is correct: 12 of 13 checks pass, and the one failure is a numerical-stability problem, not a math error. The script ran your `run_pmd` straight from the notebook.
+
+**What passed:**
+
+| Check | Result |
+|---|---|
+| τ = 0 gives plain KL, π·exp(−ηQ) normalized | exact match |
+| Hand-computed case (η = 2, τ = 0.5) | [0.731059, 0.268941], matches |
+| Gives the lowest value of the per-state objective, for 3 (η, τ) pairs | no random or nearby point did better |
+| Rows sum to 1, nothing negative, input not modified | ✓ |
+| Policy entropy increases with τ | 0.66 → 0.76 → 1.02 → 1.30 → 1.38 |
+| Huge τ gives the uniform policy | ✓ |
+| Fixed Q, repeated updates → softmax(−Q/τ) | error 2e-16 |
+| **GridWorld**, exact regularized Q, τ = 0.05, η = 5 | converges to the soft-optimal policy; value gap 0.47 → 4.5e-4 after 10 iterations → 1.8e-15 |
+| **Blackjack**, same setting | value gap 0.90 → 2.5e-4 → 1e-16 |
+
+The last two compare against soft value iteration, computed independently of your function, on the team's exact models.
+
+**What failed:** large η·Q returns NaN. Your function exponentiates `-eta * q_k / (1 + eta * tau)` directly. If every action in a row has η·Q/(1+ητ) above about 745, every exponential underflows to 0 and the row becomes 0/0. Your current problems (costs of a few units, step sizes up to 20) shouldn't hit this, but bigger step sizes or costs could.
+
+A related problem when τ = 0: a probability that underflows to exactly 0 stays 0 forever. With τ > 0 this can't happen.
+
+The fix is to work in log space and subtract each row's maximum before exponentiating. The result is mathematically the same:
+
+```python
+log_pi_next = (np.log(pi_k + 1e-300) - eta * q_k) / (1 + eta * tau)
+log_pi_next -= log_pi_next.max(axis=1, keepdims=True)  # stability: largest entry becomes exp(0) = 1
+pi_k_next = np.exp(log_pi_next)
+pi_k_next /= pi_k_next.sum(axis=1, keepdims=True)
+```
+
+Two more things to know:
+- **The docstring says Q is "treated as rewards"**, but the code uses −ηQ, so it treats Q as costs. The code is right for the team's problems, so change the docstring to say costs.
+- **With τ > 0, Q must be the regularized Q.** It has to include τ·Σπ log π in every future step's cost. The GridWorld and Blackjack checks passed only because the script computes Q that way. In sampled SPMD you have to add that entropy cost to each step's cost during rollouts, which is what `kl_spmd.EntropyCostEnv` did.
+
+I haven't changed your notebook. The validation script is at `<scratch>/validate_entropy.py`. Rerun it with `python` after any edit to the cell. I can apply the fix to the notebook if you want.
+
+====================================================================================================
+[10] 2026-11-22 00:43 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+We only need to validate with online setting as per our project guideline, so only work on that no the generative appraoch
+
+RESPONSE:
+I added an online-only validation to [entropy_reg_spmd.ipynb](Entropy-Regularized%20SPMD/entropy_reg_spmd.ipynb), after your `run_pmd` cell. It uses your `run_pmd` directly and runs in about 2 minutes; I ran the whole notebook on a copy and every cell works. I saved "online setting only" as a project rule in memory.
+
+**Results, gap to the optimal cost over 5 test seeds (lower is better):**
+
+| Problem | Method | Step size | Final gap | vs baseline |
+|---|---|---|---|---|
+| GridWorld | **baseline SPMD** | 0.5 | 0.0141 ± 0.0031 | |
+| | PMD, τ = 0 | 5 | 0.0225 ± 0.0121 | tie |
+| | **PMD, τ = 0.001** | 5 | **0.0061 ± 0.0017** | **better (z = −2.3)** |
+| | PMD, τ = 0.01 / 0.03 / 0.1 | 1 | 0.052 / 0.077 / 0.109 | worse |
+| Blackjack | **baseline SPMD** | 0.5 | 0.0000 | |
+| | PMD, τ = 0 / 0.001 / 0.01 | 5 / 1 / 1 | 0.0000 / 0.0001 / 0.0009 | tie |
+| | PMD, τ = 0.03 / 0.1 | 1 / 20 | 0.0044 / 0.0859 | worse |
+
+- **GridWorld:** τ = 0.001 is the only method that beats the baseline, by about 0.008. z = −2.3 with 5 seeds is borderline. In the learning curves it stays below the baseline for the whole run. Plain KL (τ = 0) levels off higher than both.
+- **Blackjack:** the baseline and small τ all reach the optimal policy within a few thousand steps, so there's nothing for entropy to improve. τ ≥ 0.03 is worse.
+
+**These numbers differ from [ENTROPY_RESULTS.md](Entropy-Regularized%20SPMD/ENTROPY_RESULTS.md),** which reported GridWorld online τ = 0.001 as 0.0154, a tie. The old `pmd.py` took `log(π + 1e-8)`, which keeps poor actions slightly alive; your notebook version has no floor. I reran both versions on the same seeds and the floor accounts for the whole difference (0.0154 with it, 0.0061 without). The md's online results therefore describe the old function, not yours. If you want, I can update the md's online sections with the notebook results.
+
+**What the notebook now contains:**
+- **Setup:** an `EntropyCost` wrapper that adds τ·Σπ log π to each step's cost (so the sampled Q is the regularized Q), and a training loop that stops when the environment-step budget runs out (2.4M for GridWorld, 120k for Blackjack).
+- **Tuning and testing:** step sizes tuned on seeds 100–102, then fresh test seeds 200–204, with exact scoring after every iteration.
+- **Output:** a results table with a z-score verdict against baseline SPMD, and the online learning-curve plot.
+
+**Supporting changes:**
+- I changed `estimators.py` and `exact_eval.py` so they no longer import the deleted `pmd.py`. They now add the repo root to the import path directly.
+- `compare_exploration.py`, `plot_trajectories.py` and `kl_spmd.py` still import `pmd` and won't run. The notebook doesn't need them, so I left them alone.
+
+####################################################################################################
+C. ESTIMATOR, TUNING AND SPEED
+####################################################################################################
+
+====================================================================================================
+[11] 2026-11-22 17:05 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+switch the notebook to the team's TOMC estimator
+
+RESPONSE:
+The notebook now uses the team's estimator (`utils.estimate_Q_online_mc_dynamic`), so the baseline and your method differ only in the update rule. It ran start to finish in about 26 minutes, but on 5 test seeds no method is statistically better or worse than the baseline anywhere.
+
+**What changed**
+- **[optimization.ipynb](entropy_reg_spmd/optimization.ipynb):**
+  - `train_online` now uses the team's estimator and carries the sample stream over between iterations. If the budget runs out mid-coverage, that round gives no update.
+  - `EntropyCost` adds the entropy term to each sampled step's cost and passes everything else through to the environment, including blackjack's random deal.
+  - Budgets now match the team's: GridWorld 1M steps, blackjack 120k (plus the 2k variant), inventory 1M. Return lengths T are 70, 3 and 40, with one coverage round per update.
+  - I rewrote the method markdown to describe the new estimator. The saved notebook has no outputs.
+- **[inventory.py](entropy_reg_spmd/inventory.py):**
+  - I removed the one state that can never be reached: a full shelf on Thursday, which would need a Wednesday with no sales. While it was there, the team's estimator never finished a coverage round. The model now has 90 states, and the optimal cost is unchanged.
+  - I added `step_one`, since the estimator steps one sample at a time.
+  - [test_inventory.py](entropy_reg_spmd/test_inventory.py) has a new test that every state is reachable and that `step_one` matches the model; all 8 tests pass.
+
+**Results** (final gap to optimal; 5 test seeds)
+
+| Problem | Baseline | Best PMD | Verdict |
+|---|---|---|---|
+| GridWorld (1M) | 0.143 | 0.195 (τ = 0.1) | all ties; nothing learns past the first ~25% of the budget |
+| Blackjack (120k) | 0.039 | **0.000** (τ = 0.03 and τ = 0.1) | tie (z = −1.0) |
+| Blackjack (2k) | 0.039 | **0.000** (τ = 0.01) | tie |
+| Inventory (1M) | 4.47 | 4.42 (τ = 0.1) | all ties; gaps fell only from 6.0 to about 4.5 |
+
+**What the results show**
+- **Blackjack:** this supports your proposal's hypothesis. Without entropy, the baseline and PMD with τ ≤ 0.01 each had one seed get stuck at gap 0.19. In that seed the policy became fully certain to "stop" in states where "draw" is optimal. "Draw" then fell below the estimator's 0.05 threshold, so it got the pessimistic cost of 10 and was never sampled again. With τ = 0.03 or 0.1 all 5 seeds reached the optimum. It isn't significant yet, because a single stuck seed decides the comparison.
+- **GridWorld:** one coverage round under the uniform policy costs about 530k steps, so the 1M budget allows only a few updates.
+- **Step-size grids:** most methods picked the largest step size on their grid, so the grids are too narrow for this estimator. That makes the current numbers preliminary.
+
+**Team issue:** `baseline.py` tunes each GridWorld candidate on 10% of the 1M budget (100k steps). That's less than one coverage round, so no candidate can finish even one update.
+
+I've updated [TODO.md](TODO.md): this item is checked off, and I added items for wider grids, 20 test seeds and the team tuning issue. I'd do the wider grids and the overflow fix together, since larger step sizes are exactly where the overflow happens, then rerun with 20 seeds. That rerun will take about an hour.
+
+====================================================================================================
+[12] 2026-11-22 18:26 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+can you generate the code to run the haprams testing for 10% of the budget?
+
+RESPONSE:
+I've added the tuning script, [tune.py](entropy_reg_spmd/tune.py). It runs a grid search on 10% of the budget, picks the best combination per method, then runs that on the full budget with the 20 test seeds. I've tested the tuning step on all three problems; the full test runs haven't been run yet.
+
+**How it works**
+- **Parameters searched** (3 values each):
+  - Baseline SPMD and plain KL PMD (τ = 0): step size × coverage rounds, 9 combinations each.
+  - Entropy-Regularized SPMD: τ × step size × coverage rounds, 27 combinations.
+  - The return length T stays fixed at each problem's value.
+- **Selection:** each combination runs on 3 tuning seeds and is scored by the exact gap of its final policy. A combination that completes no update within the tuning budget can't be chosen.
+- **Settings:** everything comes from `config.cfg`. I added a `[tuning]` section, plus a `tune_full_budget` key per problem.
+- **Budgets:** as you chose, GridWorld is now 10M (tuning on 1M) and inventory 3M (tuning on 300k); blackjack stays at 120k. The notebook keeps the old budgets.
+- **Shared code:** the entropy wrapper, the training run and loading the config are in [experiment.py](entropy_reg_spmd/experiment.py).
+- **Metrics:** every iteration records what the guideline asks for (estimated V(s₀) and observations used) plus the exact value.
+- **Outputs:** `results/tuned/tuning.csv`, `history.csv` and `summary.csv`, plus a printed table comparing each method with the baseline.
+- **Speed:** it runs in parallel; by default it uses 7 of the 8 cores.
+
+To run it:
+```
+.venv/bin/python entropy_reg_spmd/tune.py                      # tune, then full runs, all problems
+.venv/bin/python entropy_reg_spmd/tune.py --problems Blackjack --tune-only
+```
+
+**Tuning results**
+
+| Problem | Baseline | Plain KL (τ = 0) | Entropy-Regularized |
+|---|---|---|---|
+| GridWorld | η = 50, 1 round | η = 100, 1 round | τ = 0.001, η = 100, 1 round |
+| Blackjack | η = 0.5, 1 round | η = 10, 1 round | τ = 0.001, η = 10, 1 round |
+| Inventory | η = 0.3, 1 round | η = 1, 1 round | τ = 0.1, η = 10, 1 round |
+
+- **GridWorld:** each method managed only 1 update within the 1M tuning budget, so the tuning signal is weak.
+- **Step sizes at the edge:** on GridWorld, the baseline and plain KL picked the largest step size on their grids again. A larger top value might do better.
+- **Coverage rounds:** every method picked 1 coverage round, since extra rounds cost budget without helping.
+
+**Runtime:** tuning GridWorld and inventory took 6 minutes, partly because the 20-seed notebook run is still using the CPU. I expect the full test runs to take another 15–25 minutes.
+
+Should I start the full run now, or wait for the notebook run to finish first? And should I add a larger top step size for GridWorld before running?
+
+----------------------------------------------------------------------------------------------------
+GENERATED CODE: tune.py (first version, later replaced by the team's tune.py)
+----------------------------------------------------------------------------------------------------
+"""Hyperparameter tuning on a fraction (10%) of the budget, then full runs with the chosen settings.
+
+Follows the project guideline: grid search over up to three parameters with three values each,
+each combination run on a limited observation budget, and the best combination run on the full
+budget. All settings are in config.cfg ([tuning] and the problem sections).
+
+    method                 parameters tuned
+    baseline SPMD          step size x coverage rounds
+    PMD, tau=0 (plain KL)  step size x coverage rounds
+    Entropy-Reg SPMD       tau x step size x coverage rounds
+
+A combination is scored by the exact gap to the optimal cost of its final policy, averaged over the
+tuning seeds. Combinations that complete no update within the tuning budget are not eligible.
+
+Run from the repository root:
+    .venv/bin/python entropy_reg_spmd/tune.py                         # every problem in [tuning]
+    .venv/bin/python entropy_reg_spmd/tune.py --problems Blackjack --tune-only
+
+Writes to entropy_reg_spmd/results/tuned/: tuning.csv (every combination), history.csv (every
+iteration of every full run) and summary.csv (final gaps vs the baseline).
+"""
+import argparse
+import csv
+import os
+from concurrent.futures import ProcessPoolExecutor
+from functools import lru_cache
+from itertools import product
+from pathlib import Path
+
+import numpy as np
+
+from experiment import HERE, ExactScorer, floats, ints, load_config, make_env, run
+
+BASELINE = "baseline SPMD"
+
+
+@lru_cache(maxsize=None)
+def problem(name):
+    """(environment, scorer, horizon, full budget); cached once per worker process."""
+    section = load_config()[name]
+    env = make_env(section)
+    return env, ExactScorer(env), int(section["horizon"]), int(section["budget"])
+
+
+def one_run(job):
+    """Worker: job = (problem name, method, tau, eta, rounds, seed, budget) -> (job, history)."""
+    name, _, tau, eta, rounds, seed, budget = job
+    env, scorer, horizon, _ = problem(name)
+    return job, run(env, scorer, tau, eta, rounds, horizon, budget, seed)
+
+
+def grid(config, name):
+    """[(method, tau, eta, rounds)] for one problem."""
+    tuning, section = config["tuning"], config[name]
+    base_steps = floats(section.get("tune_baseline_step_sizes", tuning["baseline_step_sizes"]))
+    pmd_steps = floats(section.get("tune_pmd_step_sizes", tuning["pmd_step_sizes"]))
+    rounds = ints(tuning["coverage_rounds"])
+    combos = [(BASELINE, None, eta, r) for eta, r in product(base_steps, rounds)]
+    combos += [("PMD, tau=0", 0.0, eta, r) for eta, r in product(pmd_steps, rounds)]
+    combos += [("Entropy-Reg SPMD", tau, eta, r) for tau, eta, r in product(floats(tuning["taus"]), pmd_steps, rounds)]
+    return combos
+
+
+def run_all(pool, jobs):
+    return dict(pool.map(one_run, jobs, chunksize=1))
+
+
+def tune(pool, config, name):
+    """Run every combination on the tuning budget; return tuning rows and the best combination per method."""
+    tuning = config["tuning"]
+    budget = int(int(config[name]["budget"]) * float(tuning["tune_fraction"]))
+    seeds = ints(tuning["tuning_seeds"])
+    combos = grid(config, name)
+    results = run_all(pool, [(name, *combo, seed, budget) for combo in combos for seed in seeds])
+    rows = []
+    for method, tau, eta, rounds in combos:
+        histories = [results[name, method, tau, eta, rounds, seed, budget] for seed in seeds]
+        updates = min(len(h) - 1 for h in histories)
+        rows.append(dict(problem=name, method=method, tau=tau, step_size=eta, coverage_rounds=rounds,
+                         tuning_budget=budget, min_updates=updates,
+                         mean_final_gap=np.mean([h[-1]["gap"] for h in histories])))
+    best = {}
+    for row in rows:
+        if row["min_updates"] > 0 and (row["method"] not in best or row["mean_final_gap"] < best[row["method"]]["mean_final_gap"]):
+            best[row["method"]] = row
+    return rows, best
+
+
+def full_runs(pool, config, name, best):
+    """Run each method's chosen combination on the full budget with the test seeds."""
+    budget, seeds = int(config[name]["budget"]), ints(config["tuning"]["test_seeds"])
+    jobs = [(name, m, row["tau"], row["step_size"], row["coverage_rounds"], seed, budget)
+            for m, row in best.items() for seed in seeds]
+    rows = []
+    for (_, method, tau, eta, rounds, seed, _), history in run_all(pool, jobs).items():
+        rows += [dict(problem=name, method=method, tau=tau, step_size=eta, coverage_rounds=rounds, seed=seed, **record)
+                 for record in history]
+    return rows
+
+
+def summarize(history_rows, z_threshold=2.0, min_worse_diff=0.001):
+    """Final gap per (problem, method) with a z-test against the baseline."""
+    finals = {}
+    for row in history_rows:  # the last record of each run is its final policy
+        finals.setdefault((row["problem"], row["method"]), {})[row["seed"]] = row["gap"]
+    summary = []
+    for (name, method), by_seed in finals.items():
+        gaps = np.array(list(by_seed.values()))
+        base = np.array(list(finals.get((name, BASELINE), {}).values()))
+        se = np.sqrt(gaps.var(ddof=1) / len(gaps) + base.var(ddof=1) / len(base)) if len(base) > 1 else 0.0
+        diff = gaps.mean() - base.mean() if len(base) else np.nan
+        z = diff / se if se > 0 else 0.0
+        verdict = "" if method == BASELINE else (
+            "better" if z <= -z_threshold else "worse" if z >= z_threshold and diff >= min_worse_diff else "tie")
+        summary.append(dict(problem=name, method=method, seeds=len(gaps), mean_final_gap=gaps.mean(),
+                            standard_error=gaps.std(ddof=1) / np.sqrt(len(gaps)), diff_vs_baseline=diff,
+                            z=z, verdict=verdict))
+    return summary
+
+
+def write_csv(path, rows):
+    if rows:
+        with open(path, "w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(dict.fromkeys(k for r in rows for k in r)))
+            writer.writeheader()
+            writer.writerows(rows)
+
+
+def main():
+    config = load_config()
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--problems", nargs="+", default=[p.strip() for p in config["tuning"]["problems"].split(",")])
+    parser.add_argument("--tune-only", action="store_true", help="skip the full runs")
+    parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
+    parser.add_argument("--output", type=Path, default=HERE / "results" / "tuned")
+    args = parser.parse_args()
+    args.output.mkdir(parents=True, exist_ok=True)
+    tuning_rows, history_rows = [], []
+    with ProcessPoolExecutor(args.workers) as pool:
+        for name in args.problems:
+            rows, best = tune(pool, config, name)
+            tuning_rows += rows
+            write_csv(args.output / "tuning.csv", tuning_rows)
+            print(f"\n{name}: tuning budget {rows[0]['tuning_budget']:,} steps per run")
+            for method in dict.fromkeys(r["method"] for r in rows):
+                if method in best:
+                    b = best[method]
+                    print(f"  {method:17s} tau {b['tau']}, step size {b['step_size']:g}, rounds {b['coverage_rounds']}: "
+                          f"gap {b['mean_final_gap']:.4f} after >= {b['min_updates']} updates")
+                else:
+                    print(f"  {method:17s} no combination completed an update in the tuning budget")
+            if not args.tune_only:
+                history_rows += full_runs(pool, config, name, best)
+                write_csv(args.output / "history.csv", history_rows)
+    if history_rows:
+        settings = config["experiment"]
+        summary = summarize(history_rows, float(settings["z_threshold"]), float(settings["min_worse_diff"]))
+        write_csv(args.output / "summary.csv", summary)
+        print(f"\n{'problem':15s} {'method':17s} {'final gap':>17s} {'vs baseline':>12s} {'z':>6s}  verdict")
+        for row in summary:
+            print(f"{row['problem']:15s} {row['method']:17s} {row['mean_final_gap']:8.4f} ± {row['standard_error']:.4f} "
+                  f"{row['diff_vs_baseline']:+12.4f} {row['z']:+6.1f}  {row['verdict']}")
+    print(f"\nresults in {args.output}")
+
+
+if __name__ == "__main__":
+    main()
+
+
+====================================================================================================
+[13] 2026-11-23 13:20 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+can you optimize the code to run faster than hours?
+
+RESPONSE:
+The whole pipeline (tuning plus the 20-seed full runs) now takes **2.5 minutes**, down from about 5 hours.
+
+**What changed:** I added [fast_tomc.py](entropy_reg_spmd/fast_tomc.py), a faster version of the team's TOMC estimator, and the experiments now use it. It's the same algorithm: same required pairs, stopping rule, first-visit returns, fill value for unvisited pairs, and error when the budget runs out. It's faster because it draws random numbers in batches and tracks coverage with a counter. On GridWorld it also samples each step from the exact transition table instead of calling the simulator. A GridWorld step now takes 0.5 µs instead of 48 µs. `baseline.py` is untouched.
+
+**How it's checked:** [test_fast_tomc.py](entropy_reg_spmd/test_fast_tomc.py) has 6 tests, and all pass in about 2 minutes. The fast estimator uses a different random stream, so individual runs differ from the team's. The tests therefore compare distributions:
+- the GridWorld transition table against the simulator;
+- mean Q estimates and sample counts against `baseline.tomc` on blackjack, with and without the entropy cost;
+- Q estimates against the exact Q on GridWorld, with and without the entropy cost;
+- the same error when the budget runs out.
+
+**Results of the new run,** saved separately in `results/tuned_fast/` so the old ones in `results/tuned/` are kept:
+
+| Problem | Baseline | Entropy-Reg | z | Verdict |
+|---|---|---|---|---|
+| Blackjack | 0.097 ± 0.022 (10/20 optimal) | 0.097 ± 0.022 (10/20) | 0.0 | tie |
+| GridWorld | 0.108 ± 0.017 | 0.078 ± 0.005 | −1.7 | tie |
+
+**This matters for the slides:** the conclusions are not stable from run to run. With a different random stream, tuning picked different settings, and blackjack's advantage for entropy regularization disappeared. Blackjack now ties exactly, because with τ = 0.001 and the same η and seeds, both methods ended at the same final gap. Meanwhile GridWorld moved towards entropy (z = −1.7). Three tuning seeds and 20 test seeds are too few to separate these settings, so the 0.087 vs 0.126 blackjack numbers from the earlier run shouldn't be shown as a finding.
+
+Since runs are now cheap, I recommend rerunning with about 10 tuning seeds and 100 test seeds, which would take roughly 15–20 minutes. That would give the presentation a stable verdict.
+
+I've updated [reproduce.md](entropy_reg_spmd/reproduce.md) with the new timing, the fast-estimator tests and the new expected-results table, and added a comment in `config.cfg`. New learning curves are in `results/tuned_fast/learning_curves.png`.
+
+----------------------------------------------------------------------------------------------------
+GENERATED CODE: fast_tomc.py (later replaced by the team's numba version)
+----------------------------------------------------------------------------------------------------
+"""A faster drop-in for the team's TOMC estimator (baseline.tomc), same algorithm and outputs.
+
+baseline.tomc spends ~45 microseconds per step on GridWorld, mostly on per-step numpy calls
+(rng.choice with p=..., the vectorized simulator on one state, and re-checking coverage of every
+required pair). This version runs the identical estimator:
+
+- the same required pairs (pi >= pi_min), first-visit times and stopping rule
+  (every required pair visited, then gamma^(n - latest first visit) <= bias (1 - gamma)),
+- the same first-visit discounted returns (restarting at episode ends) and fill value 1/(1 - gamma),
+- the same RuntimeError when max_observations runs out,
+
+but draws uniforms in batches, samples actions by bisection on per-state cumulative
+probabilities, and tracks coverage with a counter. On GridWorld, whose cost depends only on the
+current state, one step is sampled from the exact transition table (exact_eval.gridworld_model,
+checked against the simulator in test_fast_tomc.py). Other environments use their own step_one.
+
+The random stream differs from baseline.tomc, so individual runs differ while the distribution
+of the estimates is the same (checked in test_fast_tomc.py).
+"""
+from bisect import bisect_right
+
+import numpy as np
+
+from entropy_reg_spmd.exact_eval import gridworld_model
+
+BATCH = 1 << 16
+_TABLES = {}
+
+
+class _Uniforms:
+    """Uniform(0, 1) numbers from rng, drawn BATCH at a time."""
+
+    def __init__(self, rng):
+        self.rng, self.buffer, self.index = rng, [], 0
+
+    def __call__(self):
+        if self.index == len(self.buffer):
+            self.buffer, self.index = self.rng.random(BATCH).tolist(), 0
+        self.index += 1
+        return self.buffer[self.index - 1]
+
+
+def _cumulative(rows):
+    """Per-row cumulative probabilities as Python lists, last entry forced to 1."""
+    cdf = np.cumsum(rows, axis=-1)
+    cdf /= cdf[..., -1:]
+    cdf[..., -1] = 1.0
+    return cdf.tolist()
+
+
+def _gridworld_table(env):
+    """(next-state cdf [s][a], next states [s][a], cost [s][a]) built once per GridWorld setting."""
+    key = (env.p, env.q, env.start, env.goals, env.hazards)
+    if key not in _TABLES:
+        P, c = gridworld_model(env)
+        support = [[np.flatnonzero(P[s, a]).tolist() for a in range(env.n_actions)] for s in range(env.n_states)]
+        cdf = [[_cumulative(P[s, a, support[s][a]]) for a in range(env.n_actions)] for s in range(env.n_states)]
+        _TABLES[key] = cdf, support, c.tolist()
+    return _TABLES[key]
+
+
+def _unwrap(env):
+    """(base environment, extra cost per state or None) for the EntropyCost wrapper."""
+    extra = getattr(env, "extra", None)
+    base = env.env if extra is not None and hasattr(env, "env") else env
+    return base, (None if extra is None else extra.tolist())
+
+
+def tomc(env, pi, rng, bias=0.01, pi_min=None, max_observations=200_000, log_transition=None):
+    """Same arguments and result as baseline.tomc: (Q, number of observations)."""
+    if log_transition is not None:  # per-step logging: use the team's version
+        import baseline
+        return baseline.tomc(env, pi, rng, bias, pi_min, max_observations, log_transition)
+    import baseline
+    baseline._policy_check(env, pi)
+    gamma = env.gamma
+    if not 0 < gamma < 1:
+        raise ValueError("gamma must be between 0 and 1")
+    if pi_min is None:
+        pi_min = (1 - gamma) / env.n_actions
+    if not 0 < pi_min <= 1 or bias <= 0 or max_observations < 1:
+        raise ValueError("Invalid threshold, bias, or observation limit")
+    required = pi >= pi_min
+    if not required.any():
+        raise ValueError("No state-action pairs meet pi_min")
+
+    base, extra = _unwrap(env)
+    uniform = _Uniforms(rng)
+    action_cdf = _cumulative(pi)
+    need = required.tolist()
+    remaining = int(required.sum())
+    first = {}  # (state, action) -> time of first visit, required pairs only
+    latest = -1
+    # stop once n - latest >= horizon, i.e. gamma^(n - latest) <= bias (1 - gamma)
+    threshold = bias * (1 - gamma)
+    horizon = 0
+    while gamma ** horizon > threshold:
+        horizon += 1
+
+    states, actions, costs, dones = [], [], [], []
+    gridworld = type(base).__name__ == "GridWorld" and hasattr(base, "q")
+    if gridworld:
+        next_cdf, next_support, cost_table = _gridworld_table(base)
+    state = baseline.new_start(base, rng)
+    n = 0
+    while True:
+        if n == max_observations:
+            raise RuntimeError(f"TOMC incomplete: {len(first)}/{int(required.sum())} pairs "
+                               f"after {max_observations} observations")
+        row = action_cdf[state]
+        action = bisect_right(row, uniform()) if len(row) > 1 else 0
+        if action >= len(row):
+            action = len(row) - 1
+        if gridworld:
+            cdf = next_cdf[state][action]
+            k = bisect_right(cdf, uniform()) if len(cdf) > 1 else 0
+            next_state = next_support[state][action][min(k, len(cdf) - 1)]
+            cost, done = cost_table[state][action], False
+        else:
+            next_state, cost, done = base.step_one(state, action, rng)
+            cost = float(cost)
+        if extra is not None:
+            cost += extra[state]
+        states.append(state)
+        actions.append(action)
+        costs.append(cost)
+        dones.append(done)
+        if need[state][action] and (state, action) not in first:
+            first[(state, action)] = n
+            latest = n
+            remaining -= 1
+        n += 1
+        if remaining == 0 and n - latest >= horizon:
+            break
+        state = baseline.new_start(base, rng) if done else next_state
+
+    Q = np.full(pi.shape, 1 / (1 - gamma), dtype=float)
+    G = 0.0
+    for t in range(n - 1, -1, -1):
+        G = costs[t] + (0.0 if dones[t] else gamma * G)
+        s, a = states[t], actions[t]
+        if first.get((s, a)) == t:
+            Q[s, a] = G
+    return Q, n
+
+
+====================================================================================================
+[14] 2026-11-23 14:23 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+Lets run a 3X3 grid sweep across tau and step sizes with tomc bias as default. I want you to generate a 3x3 grid with green heat map that shows the optimal results. In x-axis include step-sizes and y-axis must include taus. After its is done do the same sweep  to choose the optimal rollouts. I am confused what would be the best search approach? Or we could do another approach I need suggestions here  as well
+
+RESPONSE:
+Both sweeps are done and the heatmaps are drawn. A final check of the picks on a longer budget is still running. **My suggestion is a joint 3×3×3 grid over τ, step size and rollouts**, because the best step size changes with the number of rollouts.
+
+I took "rollouts" (M) to mean how many independent TOMC estimates are averaged into Q before each policy update, all counted against the step budget. Tell me if you meant something else. Every cell uses 100 seeds and bias 0.01.
+
+## Sweep 1: τ × step size (M = 1)
+
+| Problem | Budget | Best (τ, η) | Gap | Best baseline (τ = 0) |
+|---|---|---|---|---|
+| GridWorld | 10% (2M) | 0.1, 100 | 0.103 | 0.102 |
+| GridWorld | full (20M) | 0.1, 10 | 0.075 | 0.081 |
+| Blackjack | 10% (12k) | 0.01, 1 | 0.088 | 0.096 |
+| Blackjack | full (120k) | 0.1, 1 | 0.068 | 0.087 |
+
+At 10%, most cells are within 2 SE of the best, so that budget can barely rank them.
+
+## Sweep 2: adding rollouts (M = 1, 4, 16; full budget)
+
+| Problem | Best (τ, η, M) | Gap | Baseline, M = 1 | Baseline, best η and M |
+|---|---|---|---|---|
+| GridWorld | 0.001, 100, 16 | **0.059** | 0.081 | 0.059 |
+| Blackjack | 0.001, 1, 4 | **0.013** (85/100 optimal) | 0.087 (55/100 optimal) | 0.016 (88/100 optimal) |
+
+- **Rollouts help most, not entropy:** with the same rollouts, the baseline ties entropy regularization on both problems. Entropy has a significant edge only on GridWorld with M = 1 (z = −3.4).
+- **GridWorld caveat:** its best cell makes only one policy update in 20M steps, and no GridWorld run reached the optimum.
+- These gaps come from the seeds that picked the winners, so they're slightly optimistic.
+
+## Which search approach
+
+| Approach | What happened at the full budget |
+|---|---|
+| **τ × η first, then M** (your plan) | Missed the best cell on both: GridWorld 0.075 vs 0.059, Blackjack 0.039 vs 0.013 |
+| **Joint 3×3×3** (recommended) | Found the best cells. It also fits the guideline's limit of 3 parameters with 3 values each |
+| **Random or Bayesian search** | Not worth it: 27 cells is small, and the guideline asks for a grid search |
+
+**The tuning budget matters as much as the approach.** I ran the 10% picks at the current full budgets on 100 fresh seeds:
+- **GridWorld:** the joint pick beats the M = 1 baseline (0.075 vs 0.099, z = −4.2) but ties the baseline tuned over η and M (0.074).
+- **Blackjack:** it doesn't help (0.064 vs 0.058). At 12k steps, tuning picks M = 1 and misses M = 4.
+
+So I'd make the full budgets 10× larger (GridWorld 200M, Blackjack 1.2M). Today's full budgets then become the 10% tuning budget. Tune the baseline over the same η and M so the comparison is fair.
+
+## Before you use these
+- **Grid edges:** the winning τ and η are at the edge of the grid on both problems (τ = 0.001; η = 100 on GridWorld, 1 on Blackjack), and M = 16 is too on GridWorld. A second grid should extend past them.
+- **Earlier 3.4× claim:** some Blackjack seeds make only 1–3 updates in a whole run, which would explain that jump. Keep it off the slides.
+- **Broken reference:** `results/bias_sweep` no longer exists, but my comments in `config.cfg` still point to it.
+
+Nothing is committed, and `config.cfg` is unchanged. I'll report the longer check when it finishes.
+
+**Question for you:** should I raise the full budgets 10× and add rollouts to the team's config? It would affect every teammate's results, so agree on it with them first.
+
+Files are in `results/param_sweep/`:
+- [τ × η heatmap, full budget](results/param_sweep/scale_1/tau_step_heatmap.png)
+- [τ × η heatmap, 10% budget](results/param_sweep/scale_0.1/tau_step_heatmap.png)
+- [joint heatmap, full budget](results/param_sweep/scale_1/joint_heatmap.png)
+- [joint heatmap, 10% budget](results/param_sweep/scale_0.1/joint_heatmap.png)
+- [param_sweep.py](benchmarks/param_sweep.py)
+
+----------------------------------------------------------------------------------------------------
+GENERATED CODE: benchmarks/param_sweep.py (first version)
+----------------------------------------------------------------------------------------------------
+"""Grid search over tau x step size x rollouts for entropy-regularized SPMD (TOMC bias fixed at 0.01).
+
+A *rollout* is one independent TOMC estimate; with M rollouts, Q is the average of M estimates of the
+same policy before each update (all M count against the observation budget). M = 1 is the usual method.
+
+    tau        0.001, 0.01, 0.1      (tau = 0, the baseline, runs on the same step sizes and rollouts)
+    step size  1, 10, 100
+    rollouts   1, 4, 16
+
+Every combination runs on --budget-scale times the config's full budget with the same seeds, which are
+separate from the tuning (100-102) and test (200-219) seeds. Score: exact gap of the final policy.
+
+    .venv/bin/python benchmarks/param_sweep.py                       # 10% of the full budget
+    .venv/bin/python benchmarks/param_sweep.py --budget-scale 1
+    .venv/bin/python benchmarks/param_sweep.py --plot-only           # redraw from runs.csv
+
+Writes to results/param_sweep/scale_<s>/: runs.csv (one row per run), grid.csv (one row per
+combination), tau_step_heatmap.png (M = 1) and joint_heatmap.png (every M).
+"""
+
+import argparse
+from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
+from functools import cache
+from pathlib import Path
+from typing import Any
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.colors import LinearSegmentedColormap, Normalize
+from matplotlib.patches import Rectangle
+
+from ie692_rl.core.estimator import Estimate, QEstimator
+from ie692_rl.core.exact import ExactScorer
+from ie692_rl.core.spmd import run_spmd
+from ie692_rl.core.tomc import TOMC
+from ie692_rl.enhancements.bregman_spmd import KL
+from ie692_rl.envs.base import Environment
+from ie692_rl.experiment import (
+    Row,
+    default_workers,
+    load_config,
+    make_env,
+    mean_and_se,
+    problem_budget,
+    read_csv,
+    write_csv,
+)
+from ie692_rl.types import FloatArray
+
+ROOT = Path(__file__).resolve().parent.parent
+CONFIG = ROOT / "config.cfg"
+PROBLEMS = ("GridWorld", "Blackjack")
+TAUS = (0.001, 0.01, 0.1)
+STEP_SIZES = (1.0, 10.0, 100.0)
+ROLLOUTS = (1, 4, 16)
+BIAS = 0.01
+FIRST_SEED = 1000
+SURFACE, INK, INK_SECONDARY = "#fcfcfb", "#0b0b0b", "#52514e"
+GREENS = LinearSegmentedColormap.from_list("greens", ["#e6f4e6", "#8fcf8f", "#2f9a2f", "#005300"])
+
+
+@dataclass(frozen=True)
+class AveragedEstimator(QEstimator):
+    """Mean of ``rollouts`` independent estimates of the same policy."""
+
+    inner: QEstimator
+    rollouts: int = 1
+
+    def estimate(
+        self,
+        env: Environment,
+        policy: FloatArray,
+        rng: np.random.Generator,
+        max_observations: int,
+        extra_cost: FloatArray | None = None,
+    ) -> Estimate:
+        total, used, visited = np.zeros_like(policy), 0, 0
+        for _ in range(self.rollouts):  # a budget overrun raises: an incomplete batch makes no update
+            q, n, seen = self.inner.estimate(env, policy, rng, max_observations - used, extra_cost)
+            total += q
+            used += n
+            visited = max(visited, seen)
+        return Estimate(total / self.rollouts, used, visited)
+
+
+Job = tuple[str, float, float, int, int, int]  # problem, tau, step size, rollouts, seed, budget
+
+
+@cache
+def problem(name: str) -> tuple[Environment, ExactScorer]:
+    env = make_env(load_config(CONFIG), name)
+    return env, ExactScorer(env)
+
+
+def run_job(job: Job) -> Row:
+    name, tau, eta, rollouts, seed, budget = job
+    env, scorer = problem(name)
+    estimator = AveragedEstimator(TOMC(BIAS), rollouts)
+    history = run_spmd(env, estimator, KL(), eta, budget, seed, tau=tau, scorer=scorer).history
+    return {
+        "problem": name,
+        "tau": tau,
+        "step_size": eta,
+        "rollouts": rollouts,
+        "seed": seed,
+        "budget": budget,
+        "updates": sum(r.status == "updated" for r in history),
+        "gap": history[-1].gap,
+    }
+
+
+def run_jobs(jobs: list[Job], workers: int) -> list[Row]:
+    with ProcessPoolExecutor(workers) as pool:
+        return list(pool.map(run_job, sorted(jobs, key=lambda j: -j[-1]), chunksize=4))
+
+
+def aggregate(runs: list[Row]) -> list[Row]:
+    """One row per combination; ``tied`` = paired difference from the problem's best is within 2 SE."""
+    groups: dict[tuple[Any, ...], dict[int, Row]] = defaultdict(dict)
+    for r in runs:
+        groups[r["problem"], r["tau"], r["step_size"], r["rollouts"]][r["seed"]] = r
+    rows = []
+    for (name, tau, eta, m), by_seed in sorted(groups.items()):
+        mean, se = mean_and_se([r["gap"] for r in by_seed.values()])
+        updates = [r["updates"] for r in by_seed.values()]
+        rows.append(
+            {
+                "problem": name,
+                "tau": tau,
+                "step_size": eta,
+                "rollouts": m,
+                "seeds": len(by_seed),
+                "budget": next(iter(by_seed.values()))["budget"],
+                "mean_gap": mean,
+                "standard_error": se,
+                "optimal_seeds": sum(r["gap"] < 1e-9 for r in by_seed.values()),
+                "median_updates": float(np.median(updates)),
+                "no_update_seeds": sum(u == 0 for u in updates),
+            }
+        )
+    return rows
+
+
+def key_of(r: Row) -> tuple[Any, ...]:
+    return r["problem"], r["tau"], r["step_size"], r["rollouts"]
+
+
+def paired(runs: list[Row], a: tuple[Any, ...], b: tuple[Any, ...]) -> tuple[float, float]:
+    """Mean and standard error of gap(a) - gap(b) over their shared seeds."""
+    gaps: dict[tuple[Any, ...], dict[int, float]] = defaultdict(dict)
+    for r in runs:
+        gaps[key_of(r)][r["seed"]] = r["gap"]
+    return mean_and_se([gaps[a][s] - gaps[b][s] for s in gaps[a]])
+
+
+def best(rows: list[Row], name: str, *, baseline: bool = False, rollouts: int | None = None) -> Row:
+    candidates = [
+        r
+        for r in rows
+        if r["problem"] == name
+        and (r["tau"] == 0) == baseline
+        and (rollouts is None or r["rollouts"] == rollouts)
+    ]
+    return min(candidates, key=lambda r: r["mean_gap"])
+
+
+def heatmaps(rows: list[Row], runs: list[Row], rollouts: tuple[int, ...], path: Path) -> None:
+    """Rows: problems; columns: rollouts. Darker green = smaller gap; the best cell is outlined and cells
+    within 2 SE (paired by seed) of it are marked with ~."""
+    fig, axes = plt.subplots(
+        len(PROBLEMS) if len(rollouts) > 1 else 1,
+        len(rollouts) if len(rollouts) > 1 else len(PROBLEMS),
+        figsize=(4.3 * max(len(rollouts), len(PROBLEMS)), 3.9 * (len(PROBLEMS) if len(rollouts) > 1 else 1) + 0.3),
+        squeeze=False,
+        layout="constrained",
+        facecolor=SURFACE,
+    )
+    for i, name in enumerate(PROBLEMS):
+        shown = [r for r in rows if r["problem"] == name and r["tau"] > 0 and r["rollouts"] in rollouts]
+        gaps = [r["mean_gap"] for r in shown]
+        norm = Normalize(min(gaps), max(gaps) if max(gaps) > min(gaps) else min(gaps) + 1e-9)
+        winner = min(shown, key=lambda r: r["mean_gap"])
+        row_axes = axes[i] if len(rollouts) > 1 else axes[0][i : i + 1]
+        for ax, m in zip(row_axes, rollouts, strict=True):
+            grid = np.full((len(TAUS), len(STEP_SIZES)), np.nan)
+            for r in shown:
+                if r["rollouts"] != m:
+                    continue
+                y, x = TAUS.index(r["tau"]), STEP_SIZES.index(r["step_size"])
+                grid[y, x] = r["mean_gap"]
+                diff, se = paired(runs, key_of(r), key_of(winner))
+                mark = "" if r is winner or diff > 2 * se else " ~"
+                dark = norm(r["mean_gap"]) < 0.5
+                color = "#ffffff" if dark else INK
+                ax.text(x, y - 0.1, f"{r['mean_gap']:.3f}{mark}", ha="center", va="center", fontsize=12, color=color)
+                ax.text(x, y + 0.2, f"± {r['standard_error']:.3f}", ha="center", va="center", fontsize=8, color=color)
+                if r is winner:
+                    ax.add_patch(Rectangle((x - 0.46, y - 0.46), 0.92, 0.92, fill=False, edgecolor=INK, lw=2.5))
+            image = ax.imshow(grid, cmap=GREENS.reversed(), norm=norm, aspect="auto", origin="upper")
+            ax.set_xticks(range(len(STEP_SIZES)), [f"{e:g}" for e in STEP_SIZES])
+            ax.set_yticks(range(len(TAUS)), [f"{t:g}" for t in TAUS])
+            ax.set_xticks(np.arange(len(STEP_SIZES) - 1) + 0.5, minor=True)
+            ax.set_yticks(np.arange(len(TAUS) - 1) + 0.5, minor=True)
+            ax.grid(which="minor", color=SURFACE, linewidth=2)
+            ax.tick_params(which="both", length=0, labelsize=9, labelcolor=INK_SECONDARY)
+            ax.spines[:].set_visible(False)
+            suffix = f" · {m} rollout{'s' if m > 1 else ''} per update" if len(rollouts) > 1 else ""
+            ax.set_title(f"{name}{suffix}", loc="left", fontsize=11, color=INK)
+            ax.set_xlabel("step size η", fontsize=10, color=INK_SECONDARY)
+            ax.set_ylabel("entropy weight τ", fontsize=10, color=INK_SECONDARY)
+        bar = fig.colorbar(image, ax=list(row_axes), shrink=0.85, pad=0.02)
+        bar.outline.set_visible(False)
+        bar.ax.invert_yaxis()
+        bar.ax.tick_params(labelsize=8, labelcolor=INK_SECONDARY, length=0)
+        bar.set_label("gap to optimal (darker = better)", fontsize=8, color=INK_SECONDARY)
+    seeds = rows[0]["seeds"]
+    budgets = {r["problem"]: r["budget"] for r in rows}
+    budget_text = ", ".join(f"{n} {budgets[n]:,} steps" for n in PROBLEMS)
+    fig.suptitle(
+        f"Entropy-Reg SPMD: mean final gap ± SE, {seeds} seeds, TOMC bias {BIAS:g}\n"
+        f"{budget_text}. Box = best; ~ = within 2 SE of best",
+        x=0.01,
+        ha="left",
+        fontsize=10.5,
+        color=INK,
+    )
+    fig.savefig(path, dpi=160, facecolor=SURFACE)
+    plt.close(fig)
+
+
+def report(rows: list[Row], runs: list[Row]) -> None:
+    for name in PROBLEMS:
+        print(f"\n{name} ({best(rows, name)['budget']:,} steps, {rows[0]['seeds']} seeds)")
+        print("  tau    eta  M   gap              optimal  updates  no-update seeds")
+        for r in sorted((r for r in rows if r["problem"] == name), key=lambda r: r["mean_gap"]):
+            print(
+                f"  {r['tau']:<6g} {r['step_size']:<4g} {r['rollouts']:<3d} {r['mean_gap']:.4f} ± "
+                f"{r['standard_error']:.4f}  {r['optimal_seeds']:3d}      {r['median_updates']:5.0f}    "
+                f"{r['no_update_seeds']}"
+            )
+        joint = best(rows, name)
+        for label, other in [
+            ("best M=1 cell", best(rows, name, rollouts=1)),
+            ("best baseline M=1", best(rows, name, baseline=True, rollouts=1)),
+            ("best baseline any M", best(rows, name, baseline=True)),
+        ]:
+            diff, se = paired(runs, key_of(joint), key_of(other))
+            z = diff / se if se > 0 else 0.0
+            print(f"  joint best {key_of(joint)[1:]} vs {label} {key_of(other)[1:]}: {diff:+.4f} (z {z:+.1f})")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--budget-scale", type=float, default=0.1, help="fraction of the config's full budget")
+    parser.add_argument("--seeds", type=int, default=100)
+    parser.add_argument("--workers", type=int, default=default_workers())
+    parser.add_argument("--plot-only", action="store_true")
+    args = parser.parse_args()
+    output = ROOT / "results" / "param_sweep" / f"scale_{args.budget_scale:g}"
+    output.mkdir(parents=True, exist_ok=True)
+    if args.plot_only:
+        runs = list(read_csv(output / "runs.csv"))
+    else:
+        config = load_config(CONFIG)
+        runs = run_jobs(
+            [
+                (name, tau, eta, m, seed, round(args.budget_scale * problem_budget(config, name)))
+                for name in PROBLEMS
+                for tau in (0.0, *TAUS)
+                for eta in STEP_SIZES
+                for m in ROLLOUTS
+                for seed in range(FIRST_SEED, FIRST_SEED + args.seeds)
+            ],
+            args.workers,
+        )
+        write_csv(output / "runs.csv", runs)
+    rows = aggregate(runs)
+    write_csv(output / "grid.csv", rows)
+    heatmaps(rows, runs, (1,), output / "tau_step_heatmap.png")
+    heatmaps(rows, runs, ROLLOUTS, output / "joint_heatmap.png")
+    report(rows, runs)
+    print(f"\nsaved {output}")
+
+
+if __name__ == "__main__":
+    main()
+
+====================================================================================================
+[15] 2026-11-23 14:41 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+does running full sweep violate the sweep guidance provided by the project guideline?
+
+RESPONSE:
+The longer check finished, and it **changes my advice: joint search wasn't clearly better than your sequential plan.** Each approach won one problem, both narrowly. The picks came from the 20M / 120k sweep and ran at 200M (GridWorld) and 1.2M (Blackjack) on 100 fresh seeds, so this is a proper 10% tuning setup.
+
+| Problem | Search approach | Setting (τ, η, M) | Final gap | Optimal seeds | z vs baseline M = 1 | z vs baseline tuned over η and M |
+|---|---|---|---|---|---|---|
+| GridWorld | baseline, M = 1 | 0, 1, 1 | 0.0639 | 0 | – | +4.1 |
+| GridWorld | baseline, η × M | 0, 100, 16 | **0.0587** | 0 | −4.1 | – |
+| GridWorld | entropy, sequential | 0.1, 10, 1 | 0.0621 | 0 | −1.4 | +2.7 |
+| GridWorld | entropy, joint | 0.001, 100, 16 | 0.0593 | 0 | −3.7 | +1.3 |
+| Blackjack | baseline, M = 1 | 0, 1, 1 | 0.0581 | 70 | – | +5.8 |
+| Blackjack | baseline, η × M | 0, 1, 4 | 0.0058 | 97 | −5.8 | – |
+| Blackjack | entropy, sequential | 0.1, 1, 4 | **0.0000** | **100** | −6.5 | −1.7 |
+| Blackjack | entropy, joint | 0.001, 1, 4 | 0.0077 | 96 | −5.1 | +0.4 |
+
+- **Sequential vs joint:** joint is better on GridWorld (z = 2.0) and sequential on Blackjack (z = 2.0). I'd still use joint because it doesn't assume the parameters are independent, but the evidence doesn't favor it.
+- **Rollouts:** averaging is the solid gain. On Blackjack, M = 4 takes the baseline from 70 to 97 of 100 optimal seeds.
+- **Entropy:** it doesn't beat a baseline tuned the same way on either problem. The 100/100 on Blackjack fits your lock-in hypothesis, but against 97/100 it's only z = −1.7, a **tie** by our rule.
+- **GridWorld gained nothing from 10× steps at η = 100, M = 16:** the gap is 0.059, as it was at 20M, with a median of only 1–2 updates in 200M steps. A likely cause is that the first large step makes the policy nearly deterministic, so some required pairs are almost never reached. I haven't checked that.
+
+## My recommendation
+1. **Budgets:** use 10× for Blackjack only if the team can rerun it before the 8:00am deadline tomorrow. I wouldn't raise GridWorld's, since most of the benefit there came from M, not steps.
+2. **Search:** run the joint grid at 10% of whichever full budget you choose, with the baseline tuned over η and M. Don't pick sequential for Blackjack because it won here, since that would be choosing on test results.
+3. **Slides:** present "averaging rollouts fixes most of the lock-in; entropy adds no significant gain on top". It's supported by fresh seeds on Blackjack.
+
+If you agree, I can add rollouts to the team's config as a TOMC setting that defaults to 1, so nobody else's results change. Per-strategy results are in `results/param_sweep/scale_1/confirm.csv`.
+
+====================================================================================================
+[16] 2026-11-23 15:09 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+run the full baseline and with the chosen parameters
+
+RESPONSE:
+The full runs are done (7 seconds), using the 10% picks, today's full budgets, M = 1, bias 0.01 and test seeds 200–219. **Both results are ties**, though entropy regularization has the lower mean gap on both problems.
+
+| Problem | Method | Setting | Final gap | Optimal seeds | z | Verdict |
+|---|---|---|---|---|---|---|
+| GridWorld (20M) | baseline | η = 100 | 0.134 ± 0.044 | 0/20 | – | – |
+| GridWorld (20M) | entropy_reg | τ = 0.1, η = 100 | **0.072 ± 0.004** | 0/20 | −1.4 | tie |
+| Blackjack (120k) | baseline | η = 1 | 0.107 ± 0.022 | 9/20 | – | – |
+| Blackjack (120k) | entropy_reg | τ = 0.01, η = 1 | **0.058 ± 0.020** | 14/20 | −1.6 | tie |
+
+## How to read these
+- **GridWorld:** one baseline seed (201) ended at gap 0.95, worse than the starting policy. That one run inflates the baseline's mean and SE. Entropy had the lower gap on 15 of 20 seeds, and its worst seed was 0.106. Keep seed 201 in the results and report it: the baseline can fail badly with η = 100, and entropy didn't on these seeds.
+- **Blackjack:** don't lean on this difference. The same two settings on 100 other seeds gave 0.064 for entropy and 0.058 for the baseline (z = +0.7), the opposite direction.
+- **More seeds:** on those 100 seeds, GridWorld entropy was significantly better (0.079 vs 0.099, z = −3.4). The baseline with η = 1 gets 0.080 there, so part of that edge is the baseline's poor 10% pick.
+
+## For the slides
+A fair claim is: "Under the 10% tuning protocol, entropy regularization made GridWorld less prone to failure at a large step size. On Blackjack we found no reliable difference."
+
+Two problems with [learning_curves.png](results/full_runs/learning_curves.png):
+- **The bottom row isn't a fair comparison.** For entropy_reg, estimated V(s₀) includes the entropy term, which makes it look lower than the baseline (about 1.4 vs 2.1 on GridWorld). Use the top row for comparisons and label the bottom one.
+- **The colors are swapped** from my earlier figures. Here the baseline is blue and entropy is orange, which is the team's scheme, so use this one throughout.
+
+Everything is in `results/full_runs/`: `tuning.csv`, `tuning.png`, `history.csv`, `summary.csv` and the learning curves. I added [export_tuning.py](benchmarks/export_tuning.py) to hand my 100-seed choices to `tune.py`. The config's own 3 tuning seeds might choose differently. Nothing is committed.
+
+====================================================================================================
+[17] 2026-11-23 15:20 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+make the estimated value plot with entropy term subtracted
+
+RESPONSE:
+I made the estimated-value plots with the entropy term removed, one per problem, in your team's new figure style. Both lines average 20 seeds (± SE), and the dashed line is the optimal value:
+- [estimated_value_gridworld.png](results/full_runs/estimated_value_gridworld.png)
+- [estimated_value_blackjack.png](results/full_runs/estimated_value_blackjack.png)
+
+**How I removed it:** I reran each estimate from the same random state without the entropy cost. The sampled path is the same, so the term is removed exactly. The reruns match the saved history on all 15,246 updates. The plots average the estimates within 40 equal parts of the budget, carrying the last value forward where a part has no update. Say so in the caption.
+
+| Problem | Entropy term removed (average) | Baseline, second half | Entropy-Reg, second half | V*(s₀) |
+|---|---|---|---|---|
+| GridWorld | 0.57 | 2.11 | 2.03 | 1.95 |
+| Blackjack | 0.0002 | 0.35 | 0.31 | 0.275 |
+
+- **GridWorld:** the old gap (about 1.4 vs 2.1) was almost all the entropy term. Entropy-Reg is still slightly lower after about 5M steps, but the bands mostly overlap.
+- **Blackjack:** the term was essentially zero, so the plot is just noisy, with no visible difference between methods.
+- **Remaining bias:** rarely chosen actions are filled with a pessimistic cost, which can push estimates up for both methods. Use the exact gap to compare methods.
+
+## Two things that need your attention
+1. **The repo has new merge conflicts** in `README.md` and `src/ie692_rl/plotting.py`, from popping your stash onto two new upstream commits. Until `plotting.py` is fixed, `tune.py` won't run. I left both alone. I'd take upstream's version of each: its new learning curves are already gap-only, so you don't need my edit. Your three `figures/` files also show as deleted, so check that's intended.
+2. **Upstream changed how settings are chosen.** Tuning now uses `gap_lower`, a lower bound that doesn't need the model. My sweeps, and so these full runs, chose by exact gap, which uses the model. For results consistent with your teammates', rerun tuning with `tune.py` after the merge; the chosen settings may change.
+
+The script is [estimated_value.py](benchmarks/estimated_value.py), with the data in `results/full_runs/estimated_value.csv`. Nothing is committed. Should I resolve the two conflicts with upstream's version and then rerun tuning under the new rule?
+
+----------------------------------------------------------------------------------------------------
+GENERATED CODE: benchmarks/estimated_value.py (first version)
+----------------------------------------------------------------------------------------------------
+"""Estimated V(s0) of the full runs with the entropy term removed, so methods are comparable.
+
+With tau > 0 the estimator samples the regularized cost, so its V(s0) includes the discounted sum of
+tau * sum_a pi log pi. TOMC's sampling path does not depend on the costs, so every estimate is replayed
+from the same random state without the entropy cost: same samples, same observations, plain cost. The
+replayed runs must match results/full_runs/history.csv exactly (checked).
+
+    .venv/bin/python benchmarks/estimated_value.py
+
+Reads tuning.csv and history.csv from results/full_runs and writes estimated_value.csv and .png there.
+"""
+
+import copy
+import math
+from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+from ie692_rl.core.estimator import Estimate, QEstimator
+from ie692_rl.core.exact import ExactScorer
+from ie692_rl.core.spmd import run_spmd
+from ie692_rl.envs.base import Environment
+from ie692_rl.experiment import (
+    Job,
+    Row,
+    best_per_method,
+    build_method,
+    default_workers,
+    int_list,
+    load_config,
+    make_env,
+    method_spec,
+    names,
+    params_of,
+    problem_budget,
+    read_csv,
+    write_csv,
+)
+from ie692_rl.plotting import INK_SECONDARY, MUTED, SURFACE, _style, method_colors
+from ie692_rl.types import FloatArray
+
+ROOT = Path(__file__).resolve().parent.parent
+CONFIG = ROOT / "config.cfg"
+RESULTS = ROOT / "results" / "full_runs"
+BINS = 40
+
+
+@dataclass(frozen=True)
+class PlainValueRecorder(QEstimator):
+    """Passes estimates through and records sum_a pi(a|s0) Q(s0, a) without the entropy cost."""
+
+    inner: QEstimator
+    values: list[float] = field(default_factory=list)
+
+    def estimate(
+        self,
+        env: Environment,
+        policy: FloatArray,
+        rng: np.random.Generator,
+        max_observations: int,
+        extra_cost: FloatArray | None = None,
+    ) -> Estimate:
+        replay = copy.deepcopy(rng)
+        result = self.inner.estimate(env, policy, rng, max_observations, extra_cost)
+        plain = result
+        if extra_cost is not None:
+            plain = self.inner.estimate(env, policy, replay, max_observations, None)
+            if plain.observations != result.observations:
+                raise RuntimeError("The replay used a different number of observations")
+        self.values.append(float(policy[env.start] @ plain.q[env.start]))
+        return result
+
+
+def replay(job: Job) -> list[Row]:
+    config = load_config(job.config_path)
+    env = make_env(config, job.problem)
+    method = build_method(method_spec(config, job.method, job.problem), job.params)
+    recorder = PlainValueRecorder(method.estimator)
+    scorer = ExactScorer(env)
+    result = run_spmd(
+        env, recorder, method.divergence, method.step_size, job.budget, job.seed, tau=method.tau, scorer=scorer
+    )
+    updated = [r for r in result.history if r.status == "updated"]
+    return [
+        {
+            "problem": job.problem,
+            "method": job.method,
+            "seed": job.seed,
+            "iteration": record.iteration,
+            "observations": record.observations,
+            "cumulative_observations": record.cumulative_observations,
+            "estimated_value": record.estimated_value,
+            "estimated_value_plain": value,
+            "optimal_value": scorer.optimal,
+        }
+        for record, value in zip(updated, recorder.values, strict=True)
+    ]
+
+
+def check_against_history(rows: list[Row]) -> None:
+    saved = {
+        (r["problem"], r["method"], r["seed"], r["iteration"]): (r["cumulative_observations"], r["estimated_value"])
+        for r in read_csv(RESULTS / "history.csv")
+        if r["status"] == "updated"
+    }
+    new = {
+        (r["problem"], r["method"], r["seed"], r["iteration"]): (r["cumulative_observations"], r["estimated_value"])
+        for r in rows
+    }
+    if saved.keys() != new.keys():
+        raise RuntimeError("The replay made different updates from history.csv")
+    for key, (observations, value) in new.items():
+        if saved[key][0] != observations or not math.isclose(saved[key][1], value, rel_tol=1e-9, abs_tol=1e-9):
+            raise RuntimeError(f"The replay differs from history.csv at {key}")
+    print(f"replay matches history.csv on all {len(new):,} updates")
+
+
+def binned(rows: list[Row], budget: int) -> FloatArray:
+    """One seed: mean estimate in each of BINS equal parts of the budget (the last one is carried
+    forward through parts without an update; NaN before the first estimate)."""
+    used = np.array([r["cumulative_observations"] for r in rows])
+    values = np.array([r["estimated_value_plain"] for r in rows])
+    part = np.minimum((used * BINS / budget).astype(int), BINS - 1)
+    curve = np.full(BINS, np.nan)
+    for b in range(BINS):
+        if np.any(part == b):
+            curve[b] = values[part == b].mean()
+        elif b > 0:
+            curve[b] = curve[b - 1]
+    return curve
+
+
+def plot(rows: list[Row], budgets: dict[str, int], methods: list[str], path: Path) -> None:
+    problems = list(budgets)
+    colors = method_colors(methods)
+    fig, axes = plt.subplots(
+        1, len(problems), figsize=(5.2 * len(problems), 4.1), squeeze=False, layout="constrained", facecolor=SURFACE
+    )
+    for ax, problem in zip(axes[0], problems, strict=True):
+        x = (np.arange(BINS) + 1) / BINS * budgets[problem]
+        for method in methods:
+            by_seed: dict[int, list[Row]] = defaultdict(list)
+            for r in rows:
+                if r["problem"] == problem and r["method"] == method:
+                    by_seed[r["seed"]].append(r)
+            if not by_seed:
+                continue
+            curves = np.array([binned(h, budgets[problem]) for h in by_seed.values()])
+            ready = np.all(np.isfinite(curves), axis=0)  # every seed has an estimate
+            mean, se = curves.mean(axis=0), curves.std(axis=0, ddof=1) / np.sqrt(len(curves))
+            ax.fill_between(
+                x[ready], (mean - se)[ready], (mean + se)[ready], color=colors[method], alpha=0.15, linewidth=0
+            )
+            ax.plot(x[ready], mean[ready], color=colors[method], linewidth=2, label=method)
+        optimal = next(r["optimal_value"] for r in rows if r["problem"] == problem)
+        ax.axhline(optimal, color=MUTED, linewidth=1.2, linestyle=(0, (4, 3)), label="optimal V*(s₀)")
+        _style(ax, problem, "environment steps used", "estimated V(s₀) (lower is better)")
+        ax.set_xlim(0, budgets[problem])
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="outside lower center", ncol=len(labels), frameon=False, fontsize=9)
+    fig.suptitle(
+        f"Estimated V(s₀) without the entropy term: mean ± SE over seeds, averaged in {BINS} parts of the budget",
+        x=0.01,
+        ha="left",
+        fontsize=10,
+        color=INK_SECONDARY,
+    )
+    fig.savefig(path, dpi=160, facecolor=SURFACE)
+    plt.close(fig)
+
+
+def main() -> None:
+    config = load_config(CONFIG)
+    tuning = config["tuning"]
+    best = best_per_method(read_csv(RESULTS / "tuning.csv"))
+    budgets = {p: problem_budget(config, p) for p in dict.fromkeys(p for p, _ in best)}
+    jobs = [
+        Job(str(CONFIG), p, m, params_of(method_spec(config, m, p), row), seed, budgets[p])
+        for (p, m), row in best.items()
+        for seed in int_list(tuning["test_seeds"])
+    ]
+    with ProcessPoolExecutor(default_workers()) as pool:
+        rows = [row for part in pool.map(replay, jobs) for row in part]
+    check_against_history(rows)
+    write_csv(RESULTS / "estimated_value.csv", rows)
+    plot(rows, budgets, names(tuning["methods"]), RESULTS / "estimated_value.png")
+    for (p, m), _ in best.items():
+        last: dict[int, Row] = {r["seed"]: r for r in rows if (r["problem"], r["method"]) == (p, m)}
+        raw = np.mean([r["estimated_value"] for r in last.values()])
+        tail = [
+            r["estimated_value_plain"]
+            for r in rows
+            if (r["problem"], r["method"]) == (p, m) and r["cumulative_observations"] > budgets[p] / 2
+        ]
+        plain = np.mean([r["estimated_value_plain"] for r in last.values()])
+        print(f"{p:10s} {m:12s} last estimate: with entropy {raw:.3f}, plain {plain:.3f}; "
+              f"second half plain mean {np.mean(tail):.3f}")
+
+
+if __name__ == "__main__":
+    main()
+
+####################################################################################################
+D. EQUATIONS FOR THE SLIDES AND REPORT
+####################################################################################################
+
+====================================================================================================
+[18] 2026-11-23 16:01 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+Can you give me latex code for minimization objective of SPMD and the update euqation for it. Do the same thing with entropy regularization?
+
+RESPONSE:
+Written for: your report or slide readers, in the cost-minimization notation the code uses. It needs `amsmath` and `amssymb`.
+
+## SPMD (baseline)
+
+```latex
+% Objective
+\begin{equation}
+  \min_{\pi}\; V^{\pi}(s_0),
+  \qquad
+  V^{\pi}(s) = \mathbb{E}_{\pi}\!\left[\sum_{t=0}^{\infty} \gamma^{t}\, c(s_t,a_t)
+  \;\middle|\; s_0 = s\right],
+  \qquad
+  \pi(\cdot\mid s) \in \Delta_{\mathcal{A}} \;\; \forall s \in \mathcal{S}
+\end{equation}
+
+% Update
+\begin{equation}
+  \pi_{k+1}(\cdot\mid s) = \operatorname*{arg\,min}_{p \in \Delta_{\mathcal{A}}}
+  \Big\{ \eta_k \big\langle \widehat{Q}^{\pi_k}(s,\cdot),\, p \big\rangle
+  + D_{\mathrm{KL}}\!\big(p \,\|\, \pi_k(\cdot\mid s)\big) \Big\}
+\end{equation}
+
+% Closed form
+\begin{equation}
+  \pi_{k+1}(a\mid s) =
+  \frac{\pi_k(a\mid s)\,\exp\!\big(-\eta_k \widehat{Q}^{\pi_k}(s,a)\big)}
+       {\sum_{a'} \pi_k(a'\mid s)\,\exp\!\big(-\eta_k \widehat{Q}^{\pi_k}(s,a')\big)}
+\end{equation}
+```
+
+## Entropy-regularized SPMD
+
+```latex
+% Objective
+\begin{equation}
+  \min_{\pi}\; V_{\tau}^{\pi}(s_0),
+  \qquad
+  V_{\tau}^{\pi}(s) = \mathbb{E}_{\pi}\!\left[\sum_{t=0}^{\infty} \gamma^{t}
+  \Big( c(s_t,a_t) + \tau\, h\big(\pi(\cdot\mid s_t)\big) \Big)
+  \;\middle|\; s_0 = s\right],
+  \qquad
+  h(p) = \sum_{a} p(a)\log p(a)
+\end{equation}
+
+% Regularized action-value function
+\begin{equation}
+  Q_{\tau}^{\pi}(s,a) = c(s,a) + \tau\, h\big(\pi(\cdot\mid s)\big)
+  + \gamma\, \mathbb{E}_{s' \sim P(\cdot\mid s,a)}\big[ V_{\tau}^{\pi}(s') \big]
+\end{equation}
+
+% Update
+\begin{equation}
+  \pi_{k+1}(\cdot\mid s) = \operatorname*{arg\,min}_{p \in \Delta_{\mathcal{A}}}
+  \Big\{ \eta_k \Big[ \big\langle \widehat{Q}_{\tau}^{\pi_k}(s,\cdot),\, p \big\rangle
+  + \tau\, h(p) \Big]
+  + D_{\mathrm{KL}}\!\big(p \,\|\, \pi_k(\cdot\mid s)\big) \Big\}
+\end{equation}
+
+% Closed form
+\begin{equation}
+  \pi_{k+1}(a\mid s) =
+  \frac{\pi_k(a\mid s)^{\frac{1}{1+\eta_k\tau}}
+        \exp\!\Big(-\frac{\eta_k}{1+\eta_k\tau}\,\widehat{Q}_{\tau}^{\pi_k}(s,a)\Big)}
+       {\sum_{a'} \pi_k(a'\mid s)^{\frac{1}{1+\eta_k\tau}}
+        \exp\!\Big(-\frac{\eta_k}{1+\eta_k\tau}\,\widehat{Q}_{\tau}^{\pi_k}(s,a')\Big)}
+\end{equation}
+```
+
+## Notes for using them
+- **Symbols:** $\widehat{Q}$ is the TOMC estimate, $\eta_k$ the step size (constant in our runs), $\tau$ the entropy weight and $D_{\mathrm{KL}}(p\,\|\,q) = \sum_a p(a)\log\frac{p(a)}{q(a)}$.
+- **Sign:** $h$ is the *negative* entropy, so minimizing $+\tau h$ rewards more random policies.
+- **Consistency:** setting $\tau = 0$ recovers the baseline equations exactly.
+- **Why it avoids lock-in:** the exponent $\frac{1}{1+\eta\tau} < 1$ flattens the old policy at each step, which pulls small probabilities back up. Larger $\tau$ also moves the solution away from the true optimum.
+- **The $\tau h(\pi)$ inside $Q_\tau$** matches our code, which adds it to every step's cost. At a given state it's the same for all actions, so it cancels in the update there and only matters through future states.
+- **Not in these equations:** TOMC gives pairs with $\pi(a\mid s) < \frac{1-\gamma}{|\mathcal{A}|}$ a pessimistic value instead of a sampled one. Mention it next to the estimator.
+
+====================================================================================================
+[19] 2026-11-23 20:12 ET | second implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+what is the problem with SPMD?
+
+RESPONSE:
+The main problem with SPMD is that **it can stop exploring too early and then lock in a bad policy**. Here's how that happens:
+
+1. **The update multiplies probabilities.** Each step computes π_{k+1} ∝ π_k · exp(−ηQ̂), so an action that looks bad shrinks exponentially. It is equivalent to π_k ∝ exp(−η Σ Q̂_i) with a constant step size, so old errors stay in the sum and nothing pulls the policy back toward random.
+2. **Q̂ is noisy.** TOMC uses a single first-visit return per (s, a), so a good action can look bad by chance. A large η makes the update overreact to that.
+3. **The learner is on-policy.** It only gets data on the actions it takes, so a nearly eliminated action gets no new estimates.
+4. **TOMC makes this worse.** Actions with probability below π_min aren't evaluated and get the upper-bound cost instead. They then look terrible and are pushed down further.
+
+KL doesn't prevent this. It only limits how far *one step* moves from π_k, so many small steps can still drive a probability to 0.
+
+**How entropy regularization helps:** the exponent 1/(1+ητ) < 1 shrinks the old log-policy at each step, so past mistakes fade. The τ h(p) term also favors randomness. The price is a bias that grows with τ, which is why you anneal it.
+
+**What your results show** (`results/full_runs`, 20 seeds, mean final gap ± SE):
+
+| Problem | SPMD | Entropy-regularized | Verdict |
+|---|---|---|---|
+| GridWorld | 0.134 ± 0.043 | 0.072 ± 0.003 | tie (z = −1.4) |
+| Blackjack | 0.107 ± 0.022 | 0.058 ± 0.020 | tie (z = −1.6) |
+
+- **Consistent with the story:** the baseline's smallest action probability hits 0 in the median run on both problems. On GridWorld its results also vary far more across seeds.
+- **Don't overclaim:** the entropy version has a lower mean gap on both problems, but neither difference is statistically significant. Its smallest probability also reaches about 0 (about 10⁻⁴⁰ on GridWorld), so it doesn't fully prevent the collapse at the chosen τ.
+
+For the slides, you could say: *"SPMD can commit to a noisy estimate too early, and on-policy sampling makes that mistake hard to undo."*
+
+####################################################################################################
+E. ENTROPY-WEIGHT SCHEDULES (tried, then removed)
+####################################################################################################
+
+====================================================================================================
+[20] 2026-11-23 22:52 ET | second implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+Lets us different schedulers the polynomial, linearly decaying, and cosine scheduler
+
+RESPONSE:
+The comparison finished. **No scheduler is significantly better than the baseline**, but linear has the lowest mean gap on both problems. The table shows the mean final gap ± SE over 20 test seeds, with the chosen setting in brackets.
+
+| Method | GridWorld | Blackjack |
+|---|---|---|
+| No entropy (baseline) | 0.134 ± 0.044 | 0.087 ± 0.022 |
+| Fixed τ | 0.102 ± 0.014 (τ = 0.01, η = 100) | 0.087 ± 0.022 (τ = 0.001, η = 1) |
+| Polynomial | 0.101 ± 0.014 (τ₀ = 0.01, η = 100) | 0.048 ± 0.019 (τ₀ = 1, η = 10) |
+| **Linear** | **0.095 ± 0.013** (τ₀ = 0.01, η = 100) | **0.039 ± 0.018** (τ₀ = 0.01, η = 1) |
+| Cosine | 0.097 ± 0.013 (τ₀ = 0.01, η = 100) | 0.077 ± 0.022 (τ₀ = 1, η = 100) |
+
+Against the baseline, linear has z = −0.9 on GridWorld and z = −1.7 on Blackjack. `tune.py` calls every comparison a tie.
+
+**GridWorld: the schedulers are nearly the same.** All four entropy methods picked step size 100 and a starting weight of 0.01, so their curves almost overlap. The baseline's higher mean comes largely from a bad tail: its worst seed has a gap of 0.945, against 0.282 for each entropy method. The medians are all about 0.08. So entropy seems to avoid the worst runs more than it improves a typical one.
+
+**Blackjack: the scheduler matters more.**
+- Linear and polynomial end at about half the baseline's gap.
+- Cosine stays high until roughly 50k steps. Its chosen τ₀ = 1 is large and cosine decays slowly at first.
+- The results are all-or-nothing: the median gap is 0 for every method, so the means mostly count how many seeds got stuck.
+
+**Before you present this:**
+- **Tuning is noisy.** Fixed τ scored 0.072 on GridWorld and 0.058 on Blackjack in `full_runs`, but 0.102 and 0.087 here, because different tuning seeds picked other settings. Don't mix the two sets.
+- **Cosine did best in tuning on both problems** (0.029 on Blackjack) but not in the full runs, another sign of noise or of the shorter tuning budget.
+- **A safe claim:** *"Annealing the entropy weight gave lower mean gaps than the baseline on both problems, with linear decay lowest, but the differences were not statistically significant over 20 seeds."*
+
+**Figures:** learning curves for [GridWorld](results/tau_schedules/learning_curves_gridworld.png) and [Blackjack](results/tau_schedules/learning_curves_blackjack.png), and the [scheduler shapes](tmp/annealed/tau_schedule.png). The numbers are in [summary.csv](results/tau_schedules/summary.csv). All of `results/tau_schedules/` is new and uncommitted.
+
+The whole run took about a minute, so I can rerun the final comparison on 100 test seeds to see whether linear's advantage on Blackjack holds up.
+
+----------------------------------------------------------------------------------------------------
+GENERATED CODE: schedule code (applied as a patch script)
+----------------------------------------------------------------------------------------------------
+def edit(p, *pairs):
+    s = open(p).read()
+    for a, b in pairs:
+        assert s.count(a) == 1, (p, s.count(a), a)
+        s = s.replace(a, b)
+    open(p, "w").write(s)
+
+edit("src/ie692_rl/core/spmd.py",
+("import math\nfrom collections.abc import Callable\n", "import math\nfrom abc import ABC, abstractmethod\nfrom collections.abc import Callable\n"),
+('''def as_schedule(value: float | Schedule) -> Schedule:
+''', '''class BudgetSchedule(ABC):
+    """A schedule of the fraction of the observation budget used so far (0 at the first iteration, always
+    below 1), for schedules that must know when training ends. A plain ``Schedule`` takes the iteration k."""
+
+    @abstractmethod
+    def __call__(self, fraction: float) -> float: ...
+
+
+def as_schedule(value: float | Schedule) -> Schedule:
+'''),
+("    tau: float | Schedule = 0.0,\n    scorer", "    tau: float | Schedule | BudgetSchedule = 0.0,\n    scorer"),
+("    eta_of, tau_of = as_schedule(step_size), as_schedule(tau)\n",
+ "    eta_of = as_schedule(step_size)\n    tau_of = tau if isinstance(tau, BudgetSchedule) else as_schedule(tau)\n"),
+("        eta_k, tau_k = float(eta_of(k)), float(tau_of(k))\n",
+ "        eta_k = float(eta_of(k))\n        tau_k = float(tau_of(used / budget) if isinstance(tau_of, BudgetSchedule) else tau_of(k))\n"),
+)
+
+edit("src/ie692_rl/enhancements/entropy_reg_spmd/entropy.py",
+("    annealed tau         ``AnnealedTau`` below, tau_k = tau_0 / (k + 1)^power\n",
+ '''    annealed tau         ``AnnealedTau`` (polynomial), tau_k = tau_0 / (k + 1)^power, k = iteration
+                         ``LinearTau``, tau_0 (1 - u), and ``CosineTau``, tau_0 (1 + cos(pi u)) / 2,
+                         with u = fraction of the observation budget used
+'''),
+("from ie692_rl.core.exact import MAX_SWEEPS, ExactScorer, backup\n",
+ "from ie692_rl.core.exact import MAX_SWEEPS, ExactScorer, backup\nfrom ie692_rl.core.spmd import BudgetSchedule\n"),
+('''def soft_optimal_policy(''', '''@dataclass(frozen=True)
+class LinearTau(BudgetSchedule):
+    """tau = tau_0 (1 - u), u = fraction of the budget used: constant decay that reaches 0 at the end."""
+
+    tau0: float
+
+    def __post_init__(self) -> None:
+        _check_tau0(self.tau0)
+
+    def __call__(self, fraction: float) -> float:
+        return float(self.tau0 * (1 - _check_fraction(fraction)))
+
+
+@dataclass(frozen=True)
+class CosineTau(BudgetSchedule):
+    """tau = tau_0 (1 + cos(pi u)) / 2: slow decay at first, fastest half-way, flat near 0 at the end."""
+
+    tau0: float
+
+    def __post_init__(self) -> None:
+        _check_tau0(self.tau0)
+
+    def __call__(self, fraction: float) -> float:
+        return float(self.tau0 * (1 + math.cos(math.pi * _check_fraction(fraction))) / 2)
+
+
+def make_tau_schedule(name: str, tau0: float, power: float | None = None) -> Schedule | BudgetSchedule:
+    """The schedule called ``name`` (polynomial, linear or cosine); ``power`` is polynomial only (default 1)."""
+    if name == "polynomial":
+        return AnnealedTau(tau0, 1.0 if power is None else power)
+    if name not in ("linear", "cosine"):
+        raise ValueError(f"unknown tau schedule {name!r}: use polynomial, linear or cosine")
+    if power is not None:
+        raise ValueError(f"tau_power applies only to the polynomial schedule, not {name!r}")
+    return LinearTau(tau0) if name == "linear" else CosineTau(tau0)
+
+
+def _check_tau0(tau0: float) -> None:
+    if not (math.isfinite(tau0) and tau0 >= 0):
+        raise ValueError("tau0 must be non-negative and finite")
+
+
+def _check_fraction(fraction: float) -> float:
+    if not 0 <= fraction <= 1:
+        raise ValueError("budget fraction must be between 0 and 1")
+    return fraction
+
+
+def soft_optimal_policy('''))
+edit("src/ie692_rl/enhancements/entropy_reg_spmd/entropy.py",
+("import BudgetSchedule\n", "import BudgetSchedule, Schedule\n"))
+
+edit("src/ie692_rl/enhancements/entropy_reg_spmd/__init__.py",
+("from ie692_rl.enhancements.entropy_reg_spmd.entropy import AnnealedTau, soft_optimal_policy\n",
+ '''from ie692_rl.enhancements.entropy_reg_spmd.entropy import (
+    AnnealedTau,
+    CosineTau,
+    LinearTau,
+    make_tau_schedule,
+    soft_optimal_policy,
+)
+'''),
+('__all__ = ["AnnealedTau", "soft_optimal_policy"]', '__all__ = ["AnnealedTau", "CosineTau", "LinearTau", "make_tau_schedule", "soft_optimal_policy"]'))
+
+edit("src/ie692_rl/experiment.py",
+("parameters: spmd.step_size, spmd.tau, spmd.tau_power,\n", "parameters: spmd.step_size, spmd.tau, spmd.tau_power,\n                                    spmd.tau_schedule (polynomial | linear | cosine),\n"),
+("from ie692_rl.core.spmd import Schedule, run_spmd\n", "from ie692_rl.core.spmd import BudgetSchedule, Schedule, run_spmd\n"),
+("entropy_reg_spmd import AnnealedTau\n", "entropy_reg_spmd import make_tau_schedule\n"),
+('SPMD_KEYS = ("step_size", "tau", "tau_power")', 'SPMD_KEYS = ("step_size", "tau", "tau_power", "tau_schedule")'),
+("    step_size: float\n    tau: float | Schedule\n", "    step_size: float\n    tau: float | Schedule | BudgetSchedule\n"),
+('''    tau: float | Schedule = AnnealedTau(tau0, float(spmd["tau_power"])) if "tau_power" in spmd else tau0
+''', '''    tau: float | Schedule | BudgetSchedule = tau0
+    if "tau_schedule" in spmd or "tau_power" in spmd:  # tau_power alone means the polynomial schedule
+        power = float(spmd["tau_power"]) if "tau_power" in spmd else None
+        tau = make_tau_schedule(str(spmd.get("tau_schedule", "polynomial")), tau0, power)
+'''))
+
+edit("tests/test_entropy.py",
+("import AnnealedTau, soft_optimal_policy\n", '''import (
+    AnnealedTau,
+    CosineTau,
+    LinearTau,
+    make_tau_schedule,
+    soft_optimal_policy,
+)
+'''))
+open("tests/test_entropy.py", "a").write('''
+
+# ----------------------------------------------------------------------------- budget-based schedules
+
+
+@pytest.mark.parametrize("schedule", [LinearTau(0.1), CosineTau(0.1)])
+def test_budget_schedules_decay_from_tau0_to_zero(schedule: LinearTau | CosineTau) -> None:
+    values = [schedule(u) for u in np.linspace(0, 1, 101)]
+    assert values[0] == pytest.approx(0.1)
+    assert values[50] == pytest.approx(0.05)
+    assert values[-1] == pytest.approx(0.0, abs=1e-15)
+    assert all(b < a for a, b in zip(values, values[1:], strict=False)) and min(values) >= 0
+    for bad in (-0.1, 1.1, float("nan")):
+        with pytest.raises(ValueError):
+            schedule(bad)
+
+
+def test_cosine_starts_slower_and_ends_lower_than_linear() -> None:
+    assert CosineTau(1.0)(0.25) > LinearTau(1.0)(0.25)
+    assert CosineTau(1.0)(0.75) < LinearTau(1.0)(0.75)
+
+
+def test_make_tau_schedule() -> None:
+    assert make_tau_schedule("polynomial", 0.1) == AnnealedTau(0.1, 1.0)
+    assert make_tau_schedule("polynomial", 0.1, 2.0) == AnnealedTau(0.1, 2.0)
+    assert make_tau_schedule("linear", 0.1) == LinearTau(0.1)
+    assert make_tau_schedule("cosine", 0.1) == CosineTau(0.1)
+    for name, tau0, power in (("step", 0.1, None), ("linear", 0.1, 1.0), ("cosine", -1.0, None)):
+        with pytest.raises(ValueError):
+            make_tau_schedule(name, tau0, power)
+
+
+@pytest.mark.parametrize("schedule", [LinearTau(0.1), CosineTau(0.1)])
+def test_run_spmd_follows_the_budget_used_before_each_update(schedule: LinearTau | CosineTau) -> None:
+    budget = 20_000
+    history = run_spmd(Blackjack(), TOMC(0.01), KL(), 1.0, budget, 0, tau=schedule).history
+    updates = [r for r in history if r.status == "updated"]
+    assert len(updates) > 5
+    used = 0
+    for r in updates:
+        assert r.tau == pytest.approx(schedule(used / budget))
+        used = r.cumulative_observations
+''')
+open("configs/tau_schedules.cfg", "w").write('''# Entropy weight schedules inside the same TOMC + KL-SPMD loop: none (baseline), fixed, polynomial,
+# linear and cosine. k = iteration, u = fraction of the observation budget used (u = 0 at the start).
+#   polynomial  tau_0 / (k + 1)^tau_power      linear  tau_0 (1 - u)      cosine  tau_0 (1 + cos(pi u)) / 2
+# Run: python tune.py --config configs/tau_schedules.cfg --output results/tau_schedules
+[tuning]
+problems = GridWorld, Blackjack
+methods = baseline, entropy_reg, entropy_reg_polynomial, entropy_reg_linear, entropy_reg_cosine
+baseline = baseline
+tune_fraction = 0.1
+tuning_seeds = 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119
+test_seeds = 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219
+# Same rule as results/full_runs (uses the exact model).
+selection = exact_gap
+z_threshold = 2.0
+min_worse_diff = 0.001
+certifier_rollouts = 20
+certifier_start_rollouts = 2000
+certifier_z = 3.0
+
+[problem GridWorld]
+label = GridWorld ($10 \\times 10$)
+environment = gridworld
+size = 10
+budget = 20000000
+
+[problem Blackjack]
+label = Blackjack
+environment = blackjack
+budget = 120000
+
+[method baseline]
+label = No Entropy (Baseline)
+estimator = tomc
+divergence = kl
+spmd.step_size = 1.0, 10.0, 100.0
+estimator.bias = 0.01
+
+[method entropy_reg]
+label = Fixed $\\tau$
+estimator = tomc
+divergence = kl
+spmd.tau = 0.001, 0.01, 0.1
+spmd.step_size = 1.0, 10.0, 100.0
+estimator.bias = 0.01
+
+[method entropy_reg_polynomial]
+label = Polynomial $\\tau$
+estimator = tomc
+divergence = kl
+spmd.tau_schedule = polynomial
+spmd.tau_power = 1.0
+spmd.tau = 0.01, 0.1, 1.0
+spmd.step_size = 1.0, 10.0, 100.0
+estimator.bias = 0.01
+
+[method entropy_reg_linear]
+label = Linear $\\tau$
+estimator = tomc
+divergence = kl
+spmd.tau_schedule = linear
+spmd.tau = 0.01, 0.1, 1.0
+spmd.step_size = 1.0, 10.0, 100.0
+estimator.bias = 0.01
+
+[method entropy_reg_cosine]
+label = Cosine $\\tau$
+estimator = tomc
+divergence = kl
+spmd.tau_schedule = cosine
+spmd.tau = 0.01, 0.1, 1.0
+spmd.step_size = 1.0, 10.0, 100.0
+estimator.bias = 0.01
+''')
+
+====================================================================================================
+[21] 2026-11-24 01:19 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+you can remove the tau scheduling code from here
+
+RESPONSE:
+I removed the new τ scheduling code from your working copy. It was never committed, so GitHub isn't affected, and nothing from this step is committed to `main`.
+
+**Removed**
+- `LinearTau`, `CosineTau` and `make_tau_schedule` from [entropy.py](src/ie692_rl/enhancements/entropy_reg_spmd/entropy.py) and its `__init__.py`
+- `BudgetSchedule` from [spmd.py](src/ie692_rl/core/spmd.py)
+- the `spmd.tau_schedule` setting from [experiment.py](src/ie692_rl/experiment.py)
+- their tests in [test_entropy.py](tests/test_entropy.py), and `configs/tau_schedules.cfg`
+
+**Checks:** ruff and mypy are clean on the code. 531 tests pass, 1 is skipped, and the only failure is the same TD test as before.
+
+**Backup:** I saved all of it on a local, unpushed branch, `backup-tau-schedules`. Delete it with `git branch -D backup-tau-schedules` when you're sure.
+
+**Kept**
+- **Your label and plot edits:** `config.cfg`, `plotting.py` and the redrawn figures are unchanged.
+- **`results/tau_schedules/`:** it's untracked, and you asked to remove code. It can no longer be regenerated without the backup branch.
+- **`AnnealedTau` (τ₀/(k+1)^p):** this is older, committed code. The proposal promises it, and the team's config, tests, README and benchmark results use it, so I left it.
+
+**Before the 8:00am deadline:** your local `main` is 2 commits behind. Those commits also change `plotting.py`, which you've edited, so commit your label and plot edits before pulling.
+
+Did you want `AnnealedTau` removed too? I'd keep it, since the proposal promises it. Removing it also shifts the colors of the methods listed after it, unless they're reassigned.
+
+####################################################################################################
+F. REAL-DATA BONUS (M5 WALMART INVENTORY)
+####################################################################################################
+
+====================================================================================================
+[22] 2026-11-22 13:55 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+Can you look for any dataset about the retail inventory control system which could fit our online problem setup here?
+
+RESPONSE:
+Yes. There are a few public retail datasets that would fit, but the dataset can't be the environment by itself. Your setup needs a small tabular MDP with a known model, so each policy can be scored exactly against the optimum. The practical approach is to build an inventory MDP and take its **demand distribution from real sales data**.
+
+**How it would map onto your setup:**
+- **State:** inventory on hand, 0 to N (for example N = 20), optionally combined with day of week.
+- **Action:** order quantity, 0 to K.
+- **Cost per day:** ordering cost, plus holding cost on leftover stock, plus a lost-sales penalty for unmet demand. Use γ = 0.9, as in your other problems.
+- **Demand:** the daily-sales histogram of one store and product from the dataset. Drawing demand independently from that histogram keeps the exact transition model computable, so `ExactScorer`-style scoring still works.
+- **Online episodes:** start from an initial stock level, follow the policy, and estimate Q with your existing `online_q`.
+- **Size:** 21 states × 11 actions is about the size of Blackjack and GridWorld, and runs as fast.
+
+**Candidate datasets:**
+
+| Dataset | What it has | Fit | Caveat |
+|---|---|---|---|
+| **[M5 / Walmart](https://www.kaggle.com/c/m5-forecasting-accuracy)** (Kaggle) | Daily unit sales for 3,049 products in 10 US stores, about 5 years, with a calendar file | **Best overall:** real integer unit counts, long history, so a single store-product series gives a solid demand histogram | No stockout flags, so a zero can mean no demand or no stock. Pick steady-selling items. |
+| **[FreshRetailNet-50K](https://arxiv.org/abs/2505.16319)** (Dingdong, [Hugging Face](https://huggingface.co/datasets/sky5268/FreshRetailNet-50K/blob/main/README.md)) | 50,000 store-product series, 898 stores, 863 perishable products, hourly sales with stockout hours annotated | **Best for true demand:** you can drop or correct days with stockouts, and perishables suit a lost-sales model | Sales are globally normalized, not unit counts, so they must be discretized. CC-BY-4.0 according to a mirror; I didn't verify this on the official card. |
+| **[Corporación Favorita](https://forums.fast.ai/t/corporacion-favorita-grocery-sales-forecasting/8359)** (Kaggle) | Daily `unit_sales` per store and item for an Ecuadorian grocery chain | Good: real units, many products | Very large files, and observed sales are censored by stockouts. |
+| **[Store Item Demand Forecasting](https://github.com/qiaoxingli/storeitemdemand)** (Kaggle) | 5 years of daily sales, 50 items × 10 stores, columns only date, store, item, sales | Easiest to use: clean integers and tiny | No documented source and no covariates, so it's weak as "real retail" evidence in a report. |
+| **[Mercado Libre data challenge](https://arxiv.org/pdf/2603.19621)** | Daily sales for about 661,000 products, Feb–Mar 2021, built for predicting the stockout day | Stockout-focused | Only 2 months per product, too short for a reliable demand histogram. |
+
+I've only checked these through search results, not downloads. Kaggle datasets need an account and accepting the competition rules, and you should confirm the licenses before putting data in the repo.
+
+**My recommendation:** use M5 and pick one or two FOODS store-product series selling a few units a day, so demand fits in a small state space. If the report needs to deal with censored demand, use FreshRetailNet instead and discretize its sales into units.
+
+If you choose a dataset, I can build an inventory environment matching your GridWorld and Blackjack interface, including the exact model and a test against value iteration, and add it to the notebook's online validation.
+
+Sources:
+- [M5 Forecasting – Accuracy (Kaggle)](https://www.kaggle.com/c/m5-forecasting-accuracy)
+- [M5 dataset description (TIB)](https://service.tib.eu/ldmservice/dataset/m5-forecasting-competitions-dataset)
+- [M5 R package documentation](https://search.r-project.org/CRAN/packages/m5/m5.pdf)
+- [FreshRetailNet-50K paper (arXiv 2505.16319)](https://arxiv.org/abs/2505.16319)
+- [FreshRetailNet-50K README (Hugging Face mirror)](https://huggingface.co/datasets/sky5268/FreshRetailNet-50K/blob/main/README.md)
+- [Corporación Favorita competition (fast.ai forum)](https://forums.fast.ai/t/corporacion-favorita-grocery-sales-forecasting/8359)
+- [Favorita WaveNet paper](https://ar5iv.labs.arxiv.org/html/1803.04037)
+- [Store Item Demand Forecasting (GitHub write-up)](https://github.com/qiaoxingli/storeitemdemand)
+- [DeepStock: RL for inventory management (arXiv)](https://arxiv.org/pdf/2603.19621)
+- [InvEvolve: inventory policies with LLMs (arXiv)](https://arxiv.org/pdf/2605.00369)
+- [Deep RL for inventory networks (arXiv)](https://arxiv.org/pdf/2306.11246)
+
+====================================================================================================
+[23] 2026-11-22 15:01 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+lets build the inventory problem with M5 data
+
+RESPONSE:
+I built a retail inventory problem from the M5 Walmart data and added it as a third problem in your notebook's online validation. All 7 new tests pass and the full notebook runs in about 3.5 minutes.
+
+**The problem** ([inventory.py](entropy_reg_spmd/inventory.py)):
+- **Product:** FOODS_3_377 at store WI_1, chosen from 30,490 series. It sells 5.3 units a day, has fewer than 2% zero-sale days and never more than 2 in a row, so its sales are a fair stand-in for demand.
+- **State:** (units on hand 0–12, weekday), so **91 states**. Weekday is included because demand runs from 4.3 on Mondays to 6.6 on Saturdays.
+- **Action:** order 0–12 units, so **13 actions**. Delivery is immediate.
+- **Demand:** drawn from that weekday's sales histogram over May 2014 – May 2016.
+- **Daily cost:** $1 per delivery, plus $1.15 per unit bought, plus $0.05 per unit held overnight, minus $1.65 per unit sold.
+- **Exact model:** like GridWorld and Blackjack, it provides one, so `ExactScorer` and `online_q` work unchanged.
+
+The optimal policy is a sensible weekday-dependent reorder rule: order when stock falls to 1–3 units and fill up to 8–11, with higher levels around the weekend.
+
+**Results, online sampling, 3M steps, 5 test seeds** (gap to optimal; the uniform policy starts at 6.0):
+
+| Method | Step size | Final gap | vs baseline |
+|---|---|---|---|
+| **baseline SPMD** | 0.01 | 0.584 ± 0.010 | |
+| PMD, τ = 0 | 0.3 | **0.166 ± 0.029** | better (z = −13.7) |
+| PMD, τ = 0.001 | 0.3 | 0.172 ± 0.029 | better (z = −13.4) |
+| PMD, τ = 0.01 | 0.3 | 0.247 ± 0.016 | better (z = −18.2) |
+| PMD, τ = 0.03 | 0.1 | 0.395 ± 0.005 | better (z = −17.3) |
+| PMD, τ = 0.1 | 0.1 | 0.934 ± 0.012 | worse (z = +22.9) |
+
+- **The KL step beats the baseline by a wide margin:** about 3.5 times closer to the optimum.
+- **The entropy term itself doesn't help here.** τ = 0.001 ties plain KL, and larger τ steadily costs more. This is the same pattern as in GridWorld and Blackjack.
+- **No method reaches the optimum.** Every curve levels off above zero, which looks like the online setting's exploration limit.
+
+**Things to know:**
+- **The costs and the 70% purchase price are my assumptions;** M5 only gives sales and shelf prices. With a $3 delivery fee the optimal policy barely broke even and was nearly indifferent between actions, so I lowered it to $1. Your report should state these choices.
+- **The inventory problem needed its own step-size grids,** because its Q differences are about 10× GridWorld's. The best step sizes are inside the new grids, not at their edges.
+- **The data came from Nixtla's public GitHub mirror of M5,** because Kaggle needs a login. Only the 730-day extract (about 20 KB) is in the repo, in [entropy_reg_spmd/data/](entropy_reg_spmd/data/). `python entropy_reg_spmd/inventory.py --extract` re-downloads and regenerates it, with the raw files ignored by git. Check that the M5 competition terms allow keeping that extract in your course repo.
+- **I fixed a broken import that predates this work:** `__init__.py` still imported `generative_q`, which no longer exists in `estimators.py`, so your notebook's first import cell was failing.
+
+The tests are in [test_inventory.py](entropy_reg_spmd/test_inventory.py). They check the model against hand-computed cases, the raw data, 200,000 simulated steps and policy iteration. They also check that `online_q` is unbiased on this problem, and that your `entropy_reg_spmd` converges to the exact soft-optimal policy here.
+
+Your notebook is saved without outputs, and nothing is committed: `inventory.py`, `test_inventory.py` and `data/` are new, and `.gitignore`, `__init__.py` and the notebook are modified.
+
+----------------------------------------------------------------------------------------------------
+GENERATED CODE: inventory.py (first version)
+----------------------------------------------------------------------------------------------------
+"""Retail inventory control with demand taken from the M5 (Walmart) dataset.
+
+One product on one store shelf, reviewed once a day:
+
+    state   (units on hand at the start of the day, weekday); weekday 0 = Monday
+    action  order 0..capacity units; delivery is immediate, and only the units that fit on the
+            shelf (stock + order <= capacity) are received and paid for
+    demand  drawn from that weekday's empirical sales distribution in the M5 data
+    cost    fixed_order * [any units received] + unit_cost * received
+            + holding * units left overnight - price * units sold
+            (negative daily profit; an unmet sale is lost and costs its missing revenue)
+
+Demand is independent from day to day given the weekday, so the exact transition model is
+known and every policy can be scored exactly (exact_model, start_distribution), like the
+team's GridWorld and blackjack. The interface matches theirs: n_states, n_actions, gamma,
+step(states, actions, rng) -> (next_states, costs, done) and initial_states(count, rng).
+
+Data: M5 Forecasting competition (Makridakis Open Forecasting Center, University of Nicosia;
+Walmart unit sales 2011-01-29 to 2016-05-22, https://www.kaggle.com/c/m5-forecasting-accuracy),
+downloaded from Nixtla's public mirror (M5_URL). The extracted series used here is stored in
+data/ so the raw files (about 490 MB unzipped) are not needed to run the problem.
+
+Regenerate the extracted series (downloads about 50 MB):
+    python entropy_reg_spmd/inventory.py --extract
+"""
+import argparse
+import csv
+import urllib.request
+import zipfile
+from pathlib import Path
+
+import numpy as np
+
+M5_URL = "https://github.com/Nixtla/m5-forecasts/raw/main/datasets/m5.zip"
+DATA_DIR = Path(__file__).resolve().parent / "data"
+RAW_DIR = DATA_DIR / "m5_raw"  # git-ignored
+ITEM, STORE, DAYS = "FOODS_3_377", "WI_1", 730
+SERIES_FILE = DATA_DIR / f"m5_{ITEM}_{STORE}.csv"
+WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+# ----------------------------------------------------------------------------- data
+
+def download_m5(raw_dir=RAW_DIR):
+    """Download and unzip the files needed from the M5 mirror (skipped if already there)."""
+    raw_dir = Path(raw_dir)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    needed = ["sales_train_evaluation.csv", "calendar.csv", "sell_prices.csv"]
+    if all((raw_dir / name).exists() for name in needed):
+        return raw_dir
+    archive = raw_dir / "m5.zip"
+    if not archive.exists():
+        urllib.request.urlretrieve(M5_URL, archive)
+    with zipfile.ZipFile(archive) as zipped:
+        for name in needed:
+            zipped.extract(name, raw_dir)
+    return raw_dir
+
+
+def extract_series(raw_dir=RAW_DIR, item=ITEM, store=STORE, days=DAYS, out=SERIES_FILE):
+    """Write the last `days` days of one product-store series: date, weekday, units sold, price."""
+    raw_dir = Path(raw_dir)
+    with open(raw_dir / "sales_train_evaluation.csv") as handle:
+        reader = csv.reader(handle)
+        header = next(reader)
+        first_day = header.index("d_1")  # this mirror has no leading "id" column
+        row = next(r for r in reader if r[header.index("item_id")] == item and r[header.index("store_id")] == store)
+    sales = [int(x) for x in row[first_day:]]
+    calendar = list(csv.DictReader(open(raw_dir / "calendar.csv")))[:len(sales)]
+    prices = {}
+    with open(raw_dir / "sell_prices.csv") as handle:
+        for r in csv.DictReader(handle):
+            if r["item_id"] == item and r["store_id"] == store:
+                prices[r["wm_yr_wk"]] = float(r["sell_price"])
+    with open(out, "w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["date", "weekday", "units_sold", "sell_price"])
+        for day, units in zip(calendar[-days:], sales[-days:]):
+            writer.writerow([day["date"], day["weekday"], units, prices.get(day["wm_yr_wk"], "")])
+    return out
+
+
+def load_series(path=SERIES_FILE):
+    """(units sold per day, weekday index per day with Monday = 0, average shelf price)."""
+    rows = list(csv.DictReader(open(path)))
+    units = np.array([int(r["units_sold"]) for r in rows])
+    weekdays = np.array([WEEKDAYS.index(r["weekday"]) for r in rows])
+    price = float(np.mean([float(r["sell_price"]) for r in rows if r["sell_price"]]))
+    return units, weekdays, price
+
+
+# ----------------------------------------------------------------------------- problem
+
+class RetailInventory:
+    """Single-product inventory MDP with empirical, weekday-dependent demand (costs, gamma 0.9)."""
+
+    action_names = None  # actions are order quantities 0..capacity
+
+    def __init__(self, units, weekdays, price, capacity=None, unit_cost_fraction=0.7, holding=0.05,
+                 fixed_order=3.0, gamma=0.9, weekly=True, start_stock=0, start_weekday=0):
+        units, weekdays = np.asarray(units, dtype=int), np.asarray(weekdays, dtype=int)
+        self.capacity = int(np.percentile(units, 99)) if capacity is None else int(capacity)
+        self.price, self.unit_cost = float(price), unit_cost_fraction * float(price)
+        self.holding, self.fixed_order, self.gamma = float(holding), float(fixed_order), float(gamma)
+        self.weekly = weekly
+        self.n_days = 7 if weekly else 1
+        self.n_stock = self.capacity + 1
+        self.n_states, self.n_actions = self.n_stock * self.n_days, self.capacity + 1
+        # Demand distribution for each weekday (or one pooled distribution), over 0..max sold.
+        groups = weekdays if weekly else np.zeros_like(weekdays)
+        self.demand_pmf = np.zeros((self.n_days, units.max() + 1))
+        for day in range(self.n_days):
+            self.demand_pmf[day] = np.bincount(units[groups == day], minlength=units.max() + 1)
+            self.demand_pmf[day] /= self.demand_pmf[day].sum()
+        self._demand_cdf = np.cumsum(self.demand_pmf, axis=1)
+        self.start = self.encode(start_stock, start_weekday if weekly else 0)
+
+    @classmethod
+    def from_m5(cls, path=SERIES_FILE, **settings):
+        units, weekdays, price = load_series(path)
+        return cls(units, weekdays, price, **settings)
+
+    def encode(self, stock, day):
+        return np.asarray(day) * self.n_stock + np.asarray(stock)
+
+    def decode(self, states):
+        states = np.asarray(states)
+        return states % self.n_stock, states // self.n_stock  # (stock, day)
+
+    def _outcome(self, stock, day, order, demand):
+        """Received units, cost and next state for given demands (works elementwise)."""
+        on_shelf = np.minimum(stock + order, self.capacity)
+        received = on_shelf - stock
+        sold = np.minimum(on_shelf, demand)
+        left = on_shelf - sold
+        cost = (self.fixed_order * (received > 0) + self.unit_cost * received
+                + self.holding * left - self.price * sold)
+        next_day = (day + 1) % self.n_days
+        return cost, self.encode(left, next_day)
+
+    def step(self, states, actions, rng):
+        states, actions = np.broadcast_arrays(np.asarray(states, dtype=int), np.asarray(actions, dtype=int))
+        if np.any((states < 0) | (states >= self.n_states)) or np.any((actions < 0) | (actions >= self.n_actions)):
+            raise ValueError("state or action out of range")
+        stock, day = self.decode(states)
+        demand = (rng.random(states.shape)[..., None] > self._demand_cdf[day]).sum(axis=-1)
+        cost, next_states = self._outcome(stock, day, actions, demand)
+        return next_states, cost, np.zeros(states.shape, dtype=bool)
+
+    def initial_states(self, count, rng):
+        return np.full(count, self.start, dtype=int)
+
+    def start_distribution(self):
+        weights = np.zeros(self.n_states)
+        weights[self.start] = 1.0
+        return weights
+
+    def exact_model(self):
+        """Transition probabilities P (S, A, S) and expected one-step cost c (S, A)."""
+        P, c = np.zeros((self.n_states, self.n_actions, self.n_states)), np.zeros((self.n_states, self.n_actions))
+        demands = np.arange(self.demand_pmf.shape[1])
+        for s in range(self.n_states):
+            stock, day = self.decode(s)
+            for a in range(self.n_actions):
+                cost, next_states = self._outcome(stock, day, a, demands)
+                c[s, a] = self.demand_pmf[day] @ cost
+                np.add.at(P[s, a], next_states, self.demand_pmf[day])
+        return P, c
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--extract", action="store_true", help=f"download M5 and rewrite {SERIES_FILE.name}")
+    if parser.parse_args().extract:
+        DATA_DIR.mkdir(exist_ok=True)
+        print("wrote", extract_series(download_m5()))
+    env = RetailInventory.from_m5()
+    print(f"{ITEM} at {STORE}: capacity {env.capacity}, price ${env.price:.2f}, "
+          f"{env.n_states} states x {env.n_actions} actions")
+
+
+if __name__ == "__main__":
+    main()
+
+
+====================================================================================================
+[24] 2026-11-23 23:25 ET | second implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+can you draw some charts and figures in tmp which i could add for the presentation?
+
+RESPONSE:
+Written for: your class presentation audience.
+
+I made six figures in `tmp/inventory/`, which git ignores.
+
+| Figure | Use it for |
+|---|---|
+| [mdp_diagram.png](tmp/inventory/mdp_diagram.png) | Slide 1: state, action, demand and cost |
+| [weekday_demand.png](tmp/inventory/weekday_demand.png) | Slide 1: why the weekday is in the state |
+| [data_split.png](tmp/inventory/data_split.png) | Slide 2: 546 days to fit, 184 real days to test |
+| [**heldout_profit.png**](tmp/inventory/heldout_profit.png) | **Slide 2: the main validation result** |
+| [learning_curves_inventory.png](tmp/inventory/learning_curves_inventory.png) | Comparing your methods on the fitted model |
+| [policy_heatmap.png](tmp/inventory/policy_heatmap.png) | Backup: what the learned policy orders vs the optimum |
+
+If you only have room for three, use the diagram, the split and the profit chart.
+
+## Use these numbers, not my earlier ones
+My earlier figures (TD at $1.59, "within 5% of the optimum", "27% more than random") came from settings I tried by hand. I reran it with your `config.cfg` grids, tuned only on the training-day model, with 20 final seeds:
+
+| Policy | Gap on fitted model | Real held-out $/day (95% interval) |
+|---|---|---|
+| Random ordering | 6.13 | 1.24 (0.97–1.51) |
+| TOMC + KL-SPMD (baseline) | 5.27 | 1.39 (1.09–1.69) |
+| TOMC + Entropy-Reg. KL-SPMD | 4.35 | 1.42 (1.14–1.70) |
+| **True Online TD(λ) + KL-SPMD** | **0.88** | **1.45 (1.25–1.65)** |
+| Reorder rule (at ≤ 2, fill to 9) | 0.14 | 1.67 (1.40–1.95) |
+| Exact optimum of the fitted model | 0.00 | 1.67 (1.39–1.96) |
+
+## What you can claim
+- **The model is validated:** for all seven policies in the chart, its predicted profit falls inside the interval from real unseen sales.
+- **Learning helped:** TD earned $0.21/day more than random ordering (95% interval 0.05 to 0.38).
+- **Entropy helped on the fitted model:** the gap fell from 5.27 to 4.35 (z = −5.0). I told you earlier that it didn't help here; with proper tuning it does.
+
+## What you can't claim
+- **That one method beats another on the real sales.** TD vs the baseline is +$0.06 (−0.11 to 0.24), and entropy vs the baseline is +$0.03 (−0.04 to 0.10).
+- **That the learned policies are best.** The simple reorder rule beats them, and TD is about 13% below the optimum.
+- **That this is fully blind.** I had already seen held-out results while exploring, although the final settings came only from your existing grids.
+
+Keep the footnote: costs are assumed, sales aren't true demand, and this is one product and one split. I also haven't checked the data file against the original M5 download.
+
+To redraw everything, run these from the repo root (the backtest takes about 30 seconds):
+```bash
+.venv/bin/python tmp/inventory/backtest.py
+.venv/bin/python tmp/inventory/figures.py
+```
+If the bonus has to be reproducible from a fresh clone, move these scripts and CSVs out of `tmp/` before submitting.
+
+----------------------------------------------------------------------------------------------------
+GENERATED CODE: tmp/inventory/backtest.py (first version)
+----------------------------------------------------------------------------------------------------
+"""Held-out backtest of the M5 inventory problem (run from the repository root).
+
+    .venv/bin/python tmp/inventory/backtest.py
+
+1. Fit the demand model on the first 546 days (78 weeks).
+2. Tune every method on that model only: config.cfg grids, 10% of the 3M-step budget, 10 seeds, smallest
+   mean exact gap. Then 20 test seeds on the full budget.
+3. Replay the real sales of the last 184 days once per policy, starting from an empty shelf.
+
+The replay is exact: the distribution of stock is propagated through the actual daily demand, so a
+stochastic policy needs no sampling. Writes tuning.csv, history.csv, backtest.csv, policies.npz here.
+"""
+from concurrent.futures import ProcessPoolExecutor
+from functools import cache
+from itertools import product
+from pathlib import Path
+
+import numpy as np
+
+from ie692_rl.core.exact import ExactScorer
+from ie692_rl.core.spmd import run_spmd
+from ie692_rl.core.tomc import TOMC
+from ie692_rl.enhancements.bregman_spmd import KL
+from ie692_rl.enhancements.true_online_td import TrueOnlineTD
+from ie692_rl.envs.inventory import RetailInventory, load_series
+from ie692_rl.experiment import write_csv
+
+HERE = Path(__file__).resolve().parent
+TRAIN, BUDGET, TUNE = 546, 3_000_000, 0.1
+TUNING_SEEDS, TEST_SEEDS = range(100, 110), range(200, 220)
+STEPS = (0.1, 1.0, 10.0)
+GRIDS = {  # method -> list of settings, exactly the config.cfg grids for Inventory
+    "baseline": [dict(eta=e) for e in STEPS],
+    "entropy_reg": [dict(eta=e, tau=t) for e, t in product(STEPS, (0.001, 0.01, 0.1))],
+    "true_online_td": [dict(eta=e, td_eta=a, lam=l) for e, a, l in product(STEPS, (0.02, 0.1, 0.5), (0.5, 0.8, 0.95))],
+}
+
+
+@cache
+def setup():
+    units, weekdays, _ = load_series()
+    import csv
+    from ie692_rl.envs.inventory import SERIES_FILE
+    price = np.array([float(r["sell_price"]) for r in csv.DictReader(open(SERIES_FILE))])
+    env = RetailInventory(units[:TRAIN], weekdays[:TRAIN], price[:TRAIN].mean())
+    return env, ExactScorer(env), units, weekdays
+
+
+def run(job):
+    method, s, seed, budget = job
+    env, scorer, *_ = setup()
+    est = TrueOnlineTD(eta=s["td_eta"], lam=s["lam"], n_steps=20_000) if method == "true_online_td" else TOMC(0.01)
+    res = run_spmd(env, est, KL(), s["eta"], budget, seed, tau=s.get("tau", 0.0), scorer=scorer)
+    updates = sum(r.status == "updated" for r in res.history)
+    rows = [dict(problem="Inventory", method=method, seed=seed, iteration=r.iteration, status=r.status,
+                 cumulative_observations=r.cumulative_observations, gap=r.gap) for r in res.history]
+    return res.history[-1].gap, updates, res.policy, rows
+
+
+def replay(env, policy, demand_pmfs, days):
+    """Expected profit of each day when demand on day t has distribution demand_pmfs[t]."""
+    stock = np.zeros(env.n_stock)
+    stock[0] = 1.0
+    profit = np.zeros(len(days))
+    for t, (pmf, w) in enumerate(zip(demand_pmfs, days)):
+        nxt, ds = np.zeros(env.n_stock), np.flatnonzero(pmf)
+        for k in np.flatnonzero(stock > 0):
+            s = int(env.encode(int(k), int(w)))
+            probs = policy[s] if s >= 0 else np.eye(env.n_actions)[0]  # a state the model never saw: order nothing
+            for a in np.flatnonzero(probs):
+                cost, left, _ = env._outcome(np.array(k), np.array(w), np.array(a), ds)
+                weight = stock[k] * probs[a] * pmf[ds]
+                profit[t] -= weight @ cost
+                np.add.at(nxt, left, weight)
+        stock = nxt
+    return profit
+
+
+def main():
+    env, scorer, units, weekdays = setup()
+    with ProcessPoolExecutor(7) as pool:
+        jobs = [(m, s, seed, int(TUNE * BUDGET)) for m, g in GRIDS.items() for s in g for seed in TUNING_SEEDS]
+        results = list(pool.map(run, jobs, chunksize=4))
+        table, chosen = [], {}
+        for m, grid in GRIDS.items():
+            for s in grid:
+                sel = [r for j, r in zip(jobs, results) if j[0] == m and j[1] == s]
+                table.append(dict(method=m, **s, mean_gap=np.mean([r[0] for r in sel]), min_updates=min(r[1] for r in sel)))
+            ok = [r for r in table if r["method"] == m and r["min_updates"] > 0]
+            b = min(ok, key=lambda r: r["mean_gap"])
+            chosen[m] = {k: b[k] for k in ("eta", "tau", "td_eta", "lam") if k in b}
+            print("chosen", m, chosen[m], "tuning gap %.3f" % b["mean_gap"])
+        write_csv(HERE / "tuning.csv", table)
+        final = list(pool.map(run, [(m, chosen[m], seed, BUDGET) for m in GRIDS for seed in TEST_SEEDS]))
+    write_csv(HERE / "history.csv", [row for r in final for row in r[3]])
+    policies = {m: [r[2] for r in final[i * 20:(i + 1) * 20]] for i, m in enumerate(GRIDS)}
+
+    def rule(f):
+        p = np.zeros((env.n_states, env.n_actions))
+        for s in range(env.n_states):
+            k, d = env.decode(np.array([s]))
+            p[s, int(f(int(k[0]), int(d[0])))] = 1
+        return p
+
+    reorder = lambda lo, up: rule(lambda k, d: max(0, up - k) if k <= lo else 0)  # noqa: E731
+    _, lo, up = min((scorer.score(reorder(a, b)), a, b) for a in range(12) for b in range(a + 1, env.capacity + 1))
+    means = [units[:TRAIN][weekdays[:TRAIN] == d].mean() for d in range(7)]
+    m = scorer.model
+    q = m.costs + scorer.gamma * np.einsum("san,san->sa", m.probs, scorer.optimal_values[m.next_states])
+    policies["optimum"] = [np.eye(env.n_actions)[q.argmin(1)]]
+    policies["reorder_rule"] = [reorder(lo, up)]
+    policies["weekday_mean"] = [rule(lambda k, d: max(0, round(means[d]) - k))]
+    policies["uniform"] = [np.full_like(q, 1 / env.n_actions)]
+
+    days, actual = weekdays[TRAIN:], units[TRAIN:]
+    real = [np.eye(int(units.max()) + 1)[d] for d in actual]
+    model = [env.demand_pmf[w] for w in days]
+    T, rng = len(days), np.random.default_rng(0)
+    starts = rng.integers(0, T, (10_000, T // 7 + 1))  # circular 7-day block bootstrap
+    idx = ((starts[:, :, None] + np.arange(7)) % T).reshape(len(starts), -1)[:, :T]
+    daily = {k: np.mean([replay(env, p, real, days) for p in ps], axis=0) for k, ps in policies.items()}
+    rows = []
+    for k, ps in policies.items():
+        per_seed = [replay(env, p, real, days).mean() for p in ps]
+        lo_ci, hi_ci = np.percentile(daily[k][idx].mean(1), [2.5, 97.5])
+        diff = daily[k] - daily["optimum"]
+        dlo, dhi = np.percentile(diff[idx].mean(1), [2.5, 97.5])
+        rows.append(dict(policy=k, n_policies=len(ps), model_gap=np.mean([scorer.score(p) - scorer.optimal for p in ps]),
+                         model_profit=np.mean([replay(env, p, model, days).mean() for p in ps]), real_profit=daily[k].mean(),
+                         ci_low=lo_ci, ci_high=hi_ci, seed_sd=np.std(per_seed, ddof=1) if len(ps) > 1 else 0.0,
+                         seed_min=min(per_seed), seed_max=max(per_seed),
+                         minus_optimum=diff.mean(), minus_optimum_low=dlo, minus_optimum_high=dhi))
+        r = rows[-1]
+        print(f"{k:15s} model gap {r['model_gap']:.3f} model ${r['model_profit']:.3f} real ${r['real_profit']:.3f} "
+              f"[{lo_ci:.2f},{hi_ci:.2f}] seeds {r['seed_min']:.2f}-{r['seed_max']:.2f} vs opt {diff.mean():+.3f} [{dlo:+.2f},{dhi:+.2f}]")
+    a, b = daily["true_online_td"] - daily["uniform"], daily["true_online_td"] - daily["baseline"]
+    for name, x in (("TD - uniform", a), ("TD - TOMC", b), ("entropy - TOMC", daily["entropy_reg"] - daily["baseline"])):
+        print(name, "%.3f" % x.mean(), np.percentile(x[idx].mean(1), [2.5, 97.5]).round(3))
+    print("reorder rule", (lo, up), "weekday means", np.round(means, 2))
+    write_csv(HERE / "backtest.csv", rows)
+    np.savez(HERE / "policies.npz", **{k: np.array(v) for k, v in policies.items()}, lo=lo, up=up)
+
+
+if __name__ == "__main__":
+    main()
+
+====================================================================================================
+[25] 2026-11-23 23:41 ET | second implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+Did you run with all of the enhancements?
+
+RESPONSE:
+Not at first, but now yes: all three enhancements are in, each on its own, plus the three τ schedulers. The baseline, fixed τ and TD results match the earlier run exactly.
+
+| Method | Gap on fitted model (± SE) | z vs baseline | Real $/day |
+|---|---|---|---|
+| TOMC + KL-SPMD (baseline) | 5.27 ± 0.13 | – | 1.39 |
+| Entropy, polynomial τ | 4.77 ± 0.14 | −2.7 | 1.37 |
+| Tsallis | 4.73 ± 0.12 | −3.0 | 1.40 |
+| Entropy, linear τ | 4.44 ± 0.16 | −4.2 | 1.37 |
+| Entropy, fixed τ | 4.35 ± 0.14 | −5.0 | 1.42 |
+| Entropy, cosine τ | 4.32 ± 0.13 | −5.2 | 1.39 |
+| Euclidean | 3.84 ± 0.09 | −9.2 | 1.42 |
+| **True Online TD(λ)** | **0.88 ± 0.04** | **−33.1** | **1.45** |
+
+For reference, random ordering earns $1.24, and the simple reorder rule and the model's optimum both earn $1.67.
+
+**What this adds:**
+1. **Every enhancement beats the baseline on the fitted model,** and True Online TD does so by far the most.
+2. **Euclidean is the best method that uses TOMC,** ahead of every entropy version.
+3. **Annealing doesn't help here.** Cosine is level with fixed τ; linear and polynomial are no better.
+4. **On real sales, no method can be told apart from the baseline:** every 95% interval for the difference includes zero.
+5. **Every learned method beats random ordering on real sales,** by $0.13 to $0.21 a day, with intervals above zero.
+6. **The model's predictions still fall inside the real-sales interval** for all 12 policies.
+
+**What was not run:** the combined method from your TODO (True Online TD + best divergence + entropy regularization). No such method is defined in the config. The other TD variants weren't run either.
+
+**Updated figures:** [heldout_profit.png](tmp/inventory/heldout_profit.png) shows all 12 policies. [learning_curves_inventory.png](tmp/inventory/learning_curves_inventory.png) shows six methods, leaving out linear and cosine to keep it readable. For the talk, 12 bars may be too many, and I can make a shorter version with one bar per enhancement.
+
+As before, settings came from the config grids and were tuned only on the training days. The exception is linear and cosine τ, whose grid is in `configs/tau_schedules.cfg` with the Inventory step sizes. These are all in `tmp/`, so nothing is committed.
+
+====================================================================================================
+[26] 2026-11-23 23:59 ET | second implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+how are transition probabilities known?
+
+RESPONSE:
+They're known because **we built the environment ourselves from the sales data**. The only random part of a day is demand, and we estimate its distribution by counting. Everything else is arithmetic.
+
+## 1. Count the real sales to get demand
+For each weekday, count how often each number of units was sold. Of the 78 Fridays in the 546 fitted days:
+
+| Units sold on Friday | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Number of Fridays | 1 | 1 | 5 | 16 | 10 | 10 | 10 | 9 | 8 | 2 | 1 | 2 | 3 |
+
+So, for example, P(demand = 7 | Friday) = 9/78 ≈ 0.115.
+
+## 2. The rest is fixed rules
+Given the stock, the order and the demand, the next state is fully determined: the units left over, on the next weekday.
+
+## 3. Put them together
+Take the diagram's example: **3 units on Friday, order 6**, so 9 are on the shelf. Each possible demand leads to one next state on Saturday:
+
+| Next state | Happens when demand is | Probability |
+|---|---|---|
+| (8, Sat) | 1 | 1/78 = 0.013 |
+| (5, Sat) | 4 | 10/78 = 0.128 |
+| **(2, Sat)** | **7** | **9/78 = 0.115** |
+| (0, Sat) | 9 or more | 8/78 = 0.103 |
+
+(Only four of the ten possible next states are shown.) In general:
+
+$$P(s' \mid s, a) = \sum_{d \,:\, s'(s,a,d) \,=\, s'} P(d \mid \text{weekday})$$
+
+This is the calculation in [inventory.py](src/ie692_rl/envs/inventory.py) (`model()`), done for every state and action.
+
+## "Known" means known for our model
+- **They are estimates.** The real store's demand probabilities are unknown; we approximate them with 78 days per weekday. So V\* is exact for the *fitted model*, not for the real store.
+- **The learner doesn't use them.** TOMC and TD only draw samples from the simulator. The probabilities are used for V\*, scoring and choosing hyperparameters.
+- **They rest on assumptions:** demand is independent from day to day given the weekday, it doesn't drift over time, and sales stand in for demand (a day the shelf ran out looks like low demand).
+- **That is why the held-out test matters:** it checks whether these estimated probabilities predict profit on real days the model never saw.
+
+====================================================================================================
+[27] 2026-11-24 00:02 ET | second implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+There should be 91 states right? 91= 13*7? why are you saying 90 states?
+
+RESPONSE:
+You're right that there are **13 × 7 = 91 combinations** of stock (0–12) and weekday. We say **90** because one of them can never happen, so the code leaves it out: **(12 units, Thursday)**.
+
+**Why it can't happen:**
+- The stock on Thursday morning is whatever was left on Wednesday night.
+- The shelf holds at most 12, so starting Thursday with 12 means Wednesday had a full shelf and sold **nothing**.
+- The data has **no Wednesday with zero sales**, so P(demand = 0 | Wednesday) = 0, and the chance of reaching (12, Thursday) is 0.
+
+A full shelf on the other six mornings can happen, because each of the weekdays before them has at least one day with zero sales. For example, (12, Saturday) is possible because one Friday had zero sales.
+
+**Why remove it:** the learners are online and must be able to visit every state. TOMC waits until it has visited every required (state, action) pair, so a state it can never reach would make it run until the budget ran out. The code finds the reachable states by searching outward from s₀ (`_keep_reachable` in [inventory.py](src/ie692_rl/envs/inventory.py)).
+
+**For the slide:** you can say either of these:
+- *"13 stock levels × 7 weekdays = 91 combinations, 90 of them reachable."*
+- *"90 reachable states."*
+
+The first is safer, since anyone doing 13 × 7 will ask the same question. The diagram currently says "stock 0–12 × weekday (90 states)"; I can change it to "(90 reachable states)". In the policy heatmap, (12, Thursday) is the blank cell.
+
+####################################################################################################
+G. NOTEBOOKS AND MERGING
+####################################################################################################
+
+====================================================================================================
+[28] 2026-11-24 01:27 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+Update the  notebooks/entropy_reg_spmd.ipynb to run the hyperparams sweep to get as in results/param_sweep/scale_0.1/joint_heatmap.png and then get the graph as in results/full_runs/learning_curves.png
+[While the AI was working I added: "nothing more and nothing less".]
+
+RESPONSE:
+[entropy_reg_spmd.ipynb](notebooks/entropy_reg_spmd.ipynb) now runs only the sweep and the two figures, after the problem introduction that was already there. I ran it from top to bottom: it takes about 70 s, with no errors, and both figures are saved in it.
+
+1. **Sweep → heatmap:** runs τ × η × rollouts at 10% budget with 100 seeds. The figure is pixel-identical to `results/param_sweep/scale_0.1/joint_heatmap.png`.
+2. **Learning curves:** picks the best 1-rollout setting per method, runs the 20 test seeds at full budget, and draws the same two panels as `results/full_runs/learning_curves.png`. I compared this one by eye, not pixel by pixel. The final gaps match your saved results (0.134 vs 0.072 on GridWorld, 0.107 vs 0.058 on Blackjack).
+
+This replaces the notebook's old experiment (3M GridWorld budget, its own step sizes, results table and plot). The sweep and heatmap code is imported from [param_sweep.py](benchmarks/param_sweep.py), so the notebook needs the rest of the repo. It doesn't write any result files.
+
+As before, the GridWorld box in the heatmap (4 rollouts) isn't the setting behind the curves, because 6 of its 100 seeds made no update. The notebook states that selection rule.
+
+Nothing is committed. The notebook, config and label edits all need a commit and push before the 8:00am deadline, and `main` is still 2 commits behind the remote.
+
+====================================================================================================
+[29] 2026-11-24 01:34 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+generate another notebook file in the same directory, namely "m5_walmart.ipynb", where you are going to generate the figures as in tmp/inventory/learning_curves_inventory.png and tmp/inventory/heldout_profit.png; nothing more and nothing less
+
+RESPONSE:
+I created [m5_walmart.ipynb](notebooks/m5_walmart.ipynb), which generates just those two figures. I ran it from top to bottom without errors, and both are pixel-identical to the images in `tmp/inventory/`:
+
+1. **Learning curves:** tunes the five methods on the fitted demand model (10% budget, 10 seeds), runs the 20 test seeds at the full 3M steps, and plots the gap.
+2. **Held-out profit:** replays the learned policies, and the three reference policies in your figure, on the last 184 days of real sales.
+
+- **Run time:** it took between 1 and 2.5 minutes in my two runs.
+- **Self-contained:** it uses only the team's package and the sales data in the repo. It doesn't need `tmp/` and writes no files.
+- **Newest remote code:** I also ran it on the 2 commits you haven't pulled, and both figures came out the same.
+- **Colors:** they match your images, with True Online TD yellow. New `tune.py` figures will color that method green, because removing the annealed method from the config shifted the slots.
+
+**Other things to know**
+- **`tmp/inventory/backtest.py` no longer runs:** it imports the τ schedules I removed. The notebook replaces it for these two figures. To rerun the old script, use the `backup-tau-schedules` branch.
+- **`TODO.md` is deleted in your working copy:** I didn't delete it. If it wasn't intentional, run `git checkout HEAD -- TODO.md`.
+- **Not committed:** this notebook, the other notebook, and the config and label edits still need a commit and push before 8:00am.
+
+----------------------------------------------------------------------------------------------------
+GENERATED CODE: notebooks/m5_walmart.ipynb (the script that generated it)
+----------------------------------------------------------------------------------------------------
+import nbformat
+from nbformat.v4 import new_code_cell as code, new_markdown_cell as md, new_notebook
+P = "notebooks/m5_walmart.ipynb"
+src = nbformat.read("notebooks/entropy_reg_spmd.ipynb", 4)
+nb = new_notebook(metadata={"kernelspec": dict(src.metadata.kernelspec), "language_info": {"name": "python"}})
+nb.cells = [
+md('''# Retail inventory on M5 (Walmart) sales
+
+The demand model is fitted on the first 546 days of one product's sales (FOODS_3_377 at store WI_1). Every method is
+tuned and trained on samples from that model only: 10% of the 3M-step budget with 10 seeds for tuning (smallest mean
+exact gap), then 20 test seeds on the full budget. The learned policies are then replayed on the real sales of the
+last 184 days.'''),
+code('''import csv
+import tempfile
+from itertools import product
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+from IPython.display import Image, display
+
+from ie692_rl.core.exact import ExactScorer
+from ie692_rl.core.spmd import run_spmd
+from ie692_rl.core.tomc import TOMC
+from ie692_rl.enhancements.bregman_spmd import KL, Euclidean, Tsallis
+from ie692_rl.enhancements.true_online_td import TrueOnlineTD
+from ie692_rl.envs.inventory import SERIES_FILE, RetailInventory, load_series
+from ie692_rl.plotting import INK, INK_SECONDARY, SERIES, STYLE, _decimal_axis, _style_axes, plot_learning_curves
+
+TRAIN, BUDGET, TUNING_BUDGET = 546, 3_000_000, 300_000
+TUNING_SEEDS, TEST_SEEDS = range(100, 110), range(200, 220)
+STEPS = (0.1, 1.0, 10.0)
+GRIDS = {  # method -> settings (the config.cfg grids for Inventory)
+    "baseline": [{"eta": e} for e in STEPS],
+    "entropy_reg": [{"eta": e, "tau": t} for e, t in product(STEPS, (0.001, 0.01, 0.1))],
+    "true_online_td": [
+        {"eta": e, "td_eta": a, "lam": lam}
+        for e, a, lam in product(STEPS, (0.02, 0.1, 0.5), (0.5, 0.8, 0.95))
+    ],
+    "bregman_euclidean": [{"eta": e} for e in STEPS],
+    "bregman_tsallis": [{"eta": e, "index": i} for e, i in product(STEPS, (0.2314, 0.5, 3.5))],
+}
+
+units, weekdays, _ = load_series()
+with open(SERIES_FILE) as handle:
+    prices = np.array([float(r["sell_price"]) for r in csv.DictReader(handle)])
+env = RetailInventory(units[:TRAIN], weekdays[:TRAIN], prices[:TRAIN].mean())
+scorer = ExactScorer(env)
+
+
+def run(method, s, seed, budget):
+    """One SPMD run of a method with settings s."""
+    if method == "true_online_td":
+        estimator = TrueOnlineTD(eta=s["td_eta"], lam=s["lam"], n_steps=20_000)
+    else:
+        estimator = TOMC(0.01)
+    divergences = {"bregman_euclidean": Euclidean, "bregman_tsallis": lambda: Tsallis(s["index"])}
+    divergence = divergences.get(method, KL)()
+    return run_spmd(env, estimator, divergence, s["eta"], budget, seed, tau=s.get("tau", 0.0), scorer=scorer)
+
+
+def tune(method):
+    """Settings with the smallest mean gap, among those where every seed made an update."""
+    scores = []
+    for s in GRIDS[method]:
+        results = [run(method, s, seed, TUNING_BUDGET) for seed in TUNING_SEEDS]
+        if all(any(r.status == "updated" for r in result.history) for result in results):
+            scores.append((np.mean([result.history[-1].gap for result in results]), s))
+    return min(scores, key=lambda x: x[0])[1]
+
+
+chosen = {method: tune(method) for method in GRIDS}
+runs = {m: [run(m, chosen[m], seed, BUDGET) for seed in TEST_SEEDS] for m in GRIDS}'''),
+md('''## Learning curves'''),
+code('''# unused third slot: every method keeps its usual color
+slots = ["baseline", "entropy_reg", "unused", "true_online_td", "bregman_euclidean", "bregman_tsallis"]
+labels = {
+    "baseline": "TOMC + KL (Baseline)",
+    "entropy_reg": r"TOMC + Entropy, Const. $\\tau$",
+    "true_online_td": r"True Online TD($\\lambda$) + KL",
+    "bregman_euclidean": "TOMC + Euclidean",
+    "bregman_tsallis": "TOMC + Tsallis",
+}
+history = [
+    {"problem": "Inventory", "method": m, "seed": seed, **record.as_dict()}
+    for m in GRIDS
+    for seed, result in zip(TEST_SEEDS, runs[m], strict=True)
+    for record in result.history
+]
+with tempfile.TemporaryDirectory() as folder:
+    title = {"Inventory": "Retail Inventory (Fitted Model)"}
+    (path,) = plot_learning_curves(history, {"Inventory": BUDGET}, slots, labels, title, Path(folder))
+    display(Image(filename=str(path), width=640))'''),
+md('''## Profit on held-out sales'''),
+code('''def replay(policy, demand_pmfs, days):
+    """Expected profit of each day, starting from an empty shelf, when demand on day t follows demand_pmfs[t]."""
+    stock = np.zeros(env.n_stock)
+    stock[0] = 1.0
+    profit = np.zeros(len(days))
+    for t, (pmf, w) in enumerate(zip(demand_pmfs, days, strict=True)):
+        following, demands = np.zeros(env.n_stock), np.flatnonzero(pmf)
+        for k in np.flatnonzero(stock > 0):
+            s = int(env.encode(int(k), int(w)))
+            probs = policy[s] if s >= 0 else np.eye(env.n_actions)[0]  # unseen state: order nothing
+            for a in np.flatnonzero(probs):
+                cost, left, _ = env._outcome(np.array(k), np.array(w), np.array(a), demands)
+                weight = stock[k] * probs[a] * pmf[demands]
+                profit[t] -= weight @ cost
+                np.add.at(following, left, weight)
+        stock = following
+    return profit
+
+
+# reference policies
+m = scorer.model
+q = m.costs + scorer.gamma * np.einsum("san,san->sa", m.probs, scorer.optimal_values[m.next_states])
+means = [units[:TRAIN][weekdays[:TRAIN] == d].mean() for d in range(7)]
+weekday_mean = np.zeros_like(q)
+for s in range(env.n_states):
+    stock, day = env.decode(s)
+    weekday_mean[s, max(0, round(means[int(day)]) - int(stock))] = 1
+policies = {method: [result.policy for result in runs[method]] for method in GRIDS}
+policies["optimum"] = [np.eye(env.n_actions)[q.argmin(1)]]
+policies["weekday_mean"] = [weekday_mean]
+policies["uniform"] = [np.full_like(q, 1 / env.n_actions)]
+
+days = weekdays[TRAIN:]
+real = [np.eye(int(units.max()) + 1)[d] for d in units[TRAIN:]]
+model = [env.demand_pmf[w] for w in days]
+n_days, rng = len(days), np.random.default_rng(0)
+starts = rng.integers(0, n_days, (10_000, n_days // 7 + 1))  # circular 7-day block bootstrap
+sample = ((starts[:, :, None] + np.arange(7)) % n_days).reshape(len(starts), -1)[:, :n_days]
+
+profit = {}
+for name, group in policies.items():
+    daily = np.mean([replay(p, real, days) for p in group], axis=0)
+    low, high = np.percentile(daily[sample].mean(1), [2.5, 97.5])
+    predicted = np.mean([replay(p, model, days).mean() for p in group])
+    profit[name] = {"real": daily.mean(), "low": low, "high": high, "model": predicted}'''),
+code('''names = {
+    "uniform": "Random ordering",
+    "weekday_mean": "Order up to weekday mean",
+    "baseline": "TOMC + KL-SPMD (Baseline)",
+    "entropy_reg": r"TOMC + Entropy-Reg. KL-SPMD (Constant $\\tau$)",
+    "bregman_euclidean": "TOMC + Euclidean SPMD",
+    "bregman_tsallis": "TOMC + Tsallis SPMD",
+    "true_online_td": r"True Online TD($\\lambda$) + KL-SPMD",
+    "optimum": "Exact optimum of fitted model",
+}
+order = ["weekday_mean", "uniform", *sorted(GRIDS, key=lambda k: profit[k]["real"]), "optimum"]
+colors = dict(zip(slots, SERIES, strict=False))
+
+with plt.rc_context(STYLE), tempfile.TemporaryDirectory() as folder:
+    fig, ax = plt.subplots(figsize=(9.6, 5.1), layout="constrained")
+    for y, k in enumerate(order):
+        r = profit[k]
+        ax.barh(y, r["real"], 0.62, color=colors.get(k, "#b5b4ad"), zorder=2)
+        ax.plot([r["low"], r["high"]], [y, y], color=INK, lw=1.3, zorder=3)
+        ax.plot(r["model"], y, marker="D", ms=7, mfc="white", mec=INK, mew=1.3, ls="", zorder=4)
+        ax.text(r["high"] + 0.03, y, f"${r['real']:.2f}", va="center", color=INK, fontsize=11)
+    ax.set_yticks(range(len(order)), [names[k] for k in order])
+    ax.set_xlim(0, 2.2)
+    _decimal_axis(ax.xaxis)
+    _style_axes(ax, "Profit on Six Months of Unseen Real Sales", "Profit per Day ($)", "")
+    ax.grid(axis="y", visible=False)
+    fig.supxlabel(
+        "Bars: real held-out profit per day. Diamonds: model prediction. Lines: 95% intervals.",
+        fontsize=11,
+        color=INK_SECONDARY,
+    )
+    path = Path(folder) / "heldout_profit.png"
+    fig.savefig(path)
+    plt.close(fig)
+    display(Image(filename=str(path), width=960))'''),
+]
+nbformat.validate(nb); nbformat.write(nb, P)
+
+====================================================================================================
+[30] 2026-11-24 01:58 ET | main implementation session | Claude Opus 5.5
+====================================================================================================
+
+PROMPT:
+Can you solve my merge conflict?
+
+RESPONSE:
+The merge conflict is solved and staged, but I haven't committed it. To finish:
+
+```bash
+git commit --no-edit    # completes the merge
+git pull --no-rebase    # one new commit (results only, merges cleanly)
+git push
+```
+
+**Conflicted files:** I rebuilt all three from the remote version plus your edits.
+
+| File | What I kept |
+|---|---|
+| [config.cfg](config.cfg) | Remote grids and methods, your two labels, and no `entropy_reg_annealed`. The merge had left `[method …]` sections duplicated, so the file couldn't load. |
+| [README.md](README.md) | Remote text, including the "Policy evaluation charts" section your edit had dropped, plus your annealed change |
+| [tune.py](tune.py) | Remote method list, minus `entropy_reg_annealed`; the code itself is the remote's |
+
+**Also fixed:** the remote renamed two plotting helpers, which broke [m5_walmart.ipynb](notebooks/m5_walmart.ipynb). I updated and reran it.
+
+**Checks:** both notebooks run and produce the same figures as before. 531 tests pass and 1 is skipped; the only failure is the same TD test as before. Ruff is clean.
+
+**Before you push**
+1. **Your full-run results get deleted:** Jack's commit 4ccca91 dropped saved results, including `results/full_runs/`. The merge follows it, so `estimated_value.py` and the `--plot-only` command won't work until you restore them: `git checkout 2786a97 -- results/full_runs`, before committing. That also brings back the older figure labels.
+2. **`figures/` deletions:** your last commit (aa133a7) removed all three files, so pushing deletes them for everyone. To undo it, run `git checkout 2786a97 -- figures`.
+3. **Annealed method:** Jack's new `results/tuned/` (00dfb79) comes from the remote config, which still had `entropy_reg_annealed`. Your config drops it, so redrawing those figures would leave it out. Tell Jack. I kept `combined_annealed`, as you had.
+4. **Stray entry:** Jack's side tracks `.claude/worktrees/single-config` by accident. Your staged merge leaves it out, which is right.
+
+Your `.claude` line in `.gitignore` is still unstaged; run `git add .gitignore` first if you want it in this commit.
