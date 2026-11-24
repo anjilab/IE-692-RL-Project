@@ -21,8 +21,8 @@ from collections.abc import Callable
 from typing import Any, NamedTuple
 
 import numpy as np
+from numba import njit
 
-from ie692_rl._jit import njit_generic
 from ie692_rl.types import BoolArray, FloatArray, IntArray
 
 StepKernel = Callable[[tuple[Any, ...], int, int, np.random.Generator], tuple[int, float, bool]]
@@ -125,7 +125,7 @@ class Environment(ABC):
         return weights
 
 
-@njit_generic
+@njit
 def step_many(
     step: StepKernel,
     params: tuple[Any, ...],

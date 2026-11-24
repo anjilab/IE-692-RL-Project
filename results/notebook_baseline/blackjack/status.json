@@ -1,0 +1,12 @@
+{
+  "environment": "blackjack",
+  "eta": 0.1,
+  "bias": 0.01,
+  "pi_min": null,
+  "seed": 42,
+  "budget": 120000,
+  "updates": 71,
+  "final_status": "budget",
+  "total_observations": 120000,
+  "final_exact_gap": 0.05600353386640544
+}

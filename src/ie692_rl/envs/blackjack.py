@@ -15,8 +15,8 @@ Values are reported at the fixed state (total 8, dealer shows 3).
 from typing import Any
 
 import numpy as np
+from numba import njit
 
-from ie692_rl._jit import njit
 from ie692_rl.envs.base import Environment, Kernel, TabularModel
 from ie692_rl.types import IntArray
 
@@ -26,18 +26,18 @@ MIN_TOTAL = 2 * LOW_CARD
 STOP, DRAW = 0, 1
 
 
-@njit
+@njit(cache=True)
 def encode(total: int, dealer: int) -> int:
     """Map (player total, visible dealer card) to a 0..31 state index."""
     return (total - MIN_TOTAL) * 4 + dealer - LOW_CARD
 
 
-@njit
+@njit(cache=True)
 def _draw(rng: np.random.Generator) -> int:
     return int(rng.integers(LOW_CARD, HIGH_CARD + 1))
 
 
-@njit
+@njit(cache=True)
 def _step(
     params: tuple[Any, ...], state: int, action: int, rng: np.random.Generator
 ) -> tuple[int, float, bool]:
@@ -58,7 +58,7 @@ def _step(
     return state, 0.0, True
 
 
-@njit
+@njit(cache=True)
 def _reset(params: tuple[Any, ...], rng: np.random.Generator) -> int:
     """A fresh deal: two player cards and one visible dealer card."""
     total = _draw(rng) + _draw(rng)

@@ -36,7 +36,6 @@ from ie692_rl.core.divergence import BregmanDivergence
 from ie692_rl.core.estimator import QEstimator
 from ie692_rl.core.exact import ExactScorer
 from ie692_rl.core.optimality import RolloutCertifier
-from ie692_rl.core.policy import uniform_policy
 from ie692_rl.core.spmd import Schedule, run_spmd
 from ie692_rl.core.tomc import TOMC
 from ie692_rl.enhancements.bregman_spmd import KL, Euclidean, Tsallis
@@ -232,16 +231,6 @@ def build_method(spec: MethodSpec, params: Params) -> Method:
         float(spmd["step_size"]),
         tau,
     )
-
-
-def is_available(spec: MethodSpec) -> bool:
-    """False while the method's divergence is still a placeholder (raises NotImplementedError)."""
-    method = build_method(spec, spec.combinations()[0])
-    try:
-        method.divergence.step(uniform_policy(1, 2), np.zeros((1, 2)), 1.0)
-    except NotImplementedError:
-        return False
-    return True
 
 
 # ----------------------------------------------------------------------------- running jobs

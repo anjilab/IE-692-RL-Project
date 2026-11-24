@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from ie692_rl.core.policy import check_policy, policy_cdf, sample_action, sample_actions, uniform_policy
+from ie692_rl.core.policy import check_policy, sample_action, uniform_policy
 from ie692_rl.types import FloatArray
 
 
@@ -54,9 +54,3 @@ def test_deterministic_row() -> None:
     probs = np.array([0.0, 0.0, 1.0])
     rng = np.random.default_rng(2)
     assert all(sample_action(np.cumsum(probs), probs, rng) == 2 for _ in range(100))
-
-
-def test_sample_actions_vectorised() -> None:
-    policy = np.array([[1.0, 0.0], [0.0, 1.0]])
-    actions = sample_actions(policy_cdf(policy), policy, np.array([0, 1, 1, 0]), np.random.default_rng(3))
-    np.testing.assert_array_equal(actions, [0, 1, 1, 0])

@@ -1,19 +1,16 @@
 """Exact (noise-free) policy scoring from an environment's known model.
 
 Used only to *report* results (the gap to the optimal cost) and in tests; learners never see the
-model. Policy evaluation and value iteration run on the sparse ``TabularModel`` in numba, so a
-30x30 GridWorld is scored in milliseconds with O(|S||A|K) memory instead of a dense S x A x S
-array and an S x S linear solve.
-
-Both iterations are gamma-contractions in the sup norm; they stop once successive iterates differ
-by at most tol * (1 - gamma) / gamma, which bounds the error of the result by ``tol``.
+model. Policy values solve (I - gamma P_pi) V = c_pi directly (the problems have at most a few
+hundred states, so the S x S system is small and the solve takes well under a millisecond). Optimal
+values come from value iteration on the sparse ``TabularModel``, stopped once successive iterates
+differ by at most tol * (1 - gamma) / gamma, which bounds the error by ``tol``.
 """
 
 from functools import cached_property
 
 import numpy as np
 
-from ie692_rl._jit import njit
 from ie692_rl.core.policy import check_policy
 from ie692_rl.envs.base import Environment, TabularModel
 from ie692_rl.types import FloatArray, IntArray
@@ -37,19 +34,26 @@ class ExactScorer:
     def values(self, policy: FloatArray) -> FloatArray:
         """V^pi for every state."""
         check_policy(policy, self.n_states, self.n_actions)
-        m = self.model
-        return _policy_values(m.next_states, m.probs, m.costs, policy, self.gamma, self._stop, MAX_SWEEPS)
+        m, S = self.model, self.n_states
+        rows = np.arange(S)[:, None, None] * S + m.next_states  # flat index of (s, s') in P_pi
+        P = np.bincount(rows.ravel(), (policy[:, :, None] * m.probs).ravel(), minlength=S * S)
+        cost = (policy * m.costs).sum(axis=1)
+        return np.linalg.solve(np.eye(S) - self.gamma * P.reshape(S, S), cost)
 
     def q_values(self, policy: FloatArray) -> FloatArray:
         """Q^pi(s, a) = c(s, a) + gamma * E[V^pi(s')]."""
-        return backup(
-            self.model.next_states, self.model.probs, self.model.costs, self.values(policy), self.gamma
-        )
+        m = self.model
+        return backup(m.next_states, m.probs, m.costs, self.values(policy), self.gamma)
 
     @cached_property
     def optimal_values(self) -> FloatArray:
-        m = self.model
-        return _optimal_values(m.next_states, m.probs, m.costs, self.gamma, self._stop, MAX_SWEEPS)
+        m, v = self.model, np.zeros(self.n_states)
+        for _ in range(MAX_SWEEPS):
+            new = backup(m.next_states, m.probs, m.costs, v, self.gamma).min(axis=1)
+            if np.abs(new - v).max() <= self._stop:
+                return new
+            v = new
+        return v
 
     @cached_property
     def optimal(self) -> float:
@@ -69,62 +73,8 @@ class ExactScorer:
         return self.tol * (1 - self.gamma) / self.gamma
 
 
-@njit
 def backup(
     next_states: IntArray, probs: FloatArray, costs: FloatArray, v: FloatArray, gamma: float
 ) -> FloatArray:
-    S, A, K = probs.shape
-    q = np.empty((S, A))
-    for s in range(S):
-        for a in range(A):
-            expected = 0.0
-            for k in range(K):
-                expected += probs[s, a, k] * v[next_states[s, a, k]]
-            q[s, a] = costs[s, a] + gamma * expected
-    return q
-
-
-@njit
-def _policy_values(
-    next_states: IntArray,
-    probs: FloatArray,
-    costs: FloatArray,
-    policy: FloatArray,
-    gamma: float,
-    stop: float,
-    max_sweeps: int,
-) -> FloatArray:
-    S, A = costs.shape
-    v = np.zeros(S)
-    for _ in range(max_sweeps):
-        q = backup(next_states, probs, costs, v, gamma)
-        change = 0.0
-        for s in range(S):
-            new = 0.0
-            for a in range(A):
-                new += policy[s, a] * q[s, a]
-            change = max(change, abs(new - v[s]))
-            v[s] = new
-        if change <= stop:
-            break
-    return v
-
-
-@njit
-def _optimal_values(
-    next_states: IntArray, probs: FloatArray, costs: FloatArray, gamma: float, stop: float, max_sweeps: int
-) -> FloatArray:
-    S, A = costs.shape
-    v = np.zeros(S)
-    for _ in range(max_sweeps):
-        q = backup(next_states, probs, costs, v, gamma)
-        change = 0.0
-        for s in range(S):
-            new = q[s, 0]
-            for a in range(1, A):
-                new = min(new, q[s, a])
-            change = max(change, abs(new - v[s]))
-            v[s] = new
-        if change <= stop:
-            break
-    return v
+    """Q(s, a) = c(s, a) + gamma * sum_k probs[s, a, k] * v[next_states[s, a, k]]."""
+    return costs + gamma * (probs * v[next_states]).sum(axis=2)

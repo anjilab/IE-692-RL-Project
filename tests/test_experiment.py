@@ -8,19 +8,16 @@ import pytest
 
 import tune
 from ie692_rl.core import TOMC
-from ie692_rl.core.divergence import BregmanDivergence
 from ie692_rl.enhancements.bregman_spmd import KL
 from ie692_rl.enhancements.entropy_reg_spmd import AnnealedTau
 from ie692_rl.enhancements.true_online_td import TrueOnlineTD
 from ie692_rl.envs import GridWorld, RetailInventory
 from ie692_rl.experiment import (
-    DIVERGENCES,
     MethodSpec,
     best_per_method,
     build_method,
     gap_curve,
     int_list,
-    is_available,
     load_config,
     make_certifier,
     make_env,
@@ -38,7 +35,6 @@ from ie692_rl.experiment import (
     write_csv,
     z_verdict,
 )
-from ie692_rl.types import FloatArray
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = load_config(ROOT / "config.cfg")
@@ -146,43 +142,6 @@ def test_inventory_settings_and_step_size_override() -> None:
     assert env.capacity == 12
     assert method_spec(CONFIG, "baseline", "Inventory").grid["spmd.step_size"] == [0.1, 1.0, 10.0]
     assert method_spec(CONFIG, "true_online_td", "Blackjack").grid["estimator.n_steps"] == [2000]
-
-
-def test_every_configured_method_is_available() -> None:
-    for method in names(CONFIG["tuning"]["methods"]):
-        assert is_available(method_spec(CONFIG, method, "GridWorld")), method
-
-
-def test_unimplemented_divergences_are_skipped(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    class Unfinished(BregmanDivergence):
-        name = "unfinished"
-
-        def divergence(self, p: FloatArray, center: FloatArray) -> FloatArray:
-            raise NotImplementedError
-
-        def step(self, policy: FloatArray, q: FloatArray, eta: float, tau: float = 0.0) -> FloatArray:
-            raise NotImplementedError
-
-    monkeypatch.setitem(DIVERGENCES, "unfinished", Unfinished)
-    config = write_config(tmp_path, TINY_CONFIG.replace("divergence = euclidean", "divergence = unfinished"))
-    assert not is_available(method_spec(load_config(config), "euclid", "Blackjack"))
-    tune.main(
-        [
-            "--config",
-            str(config),
-            "--output",
-            str(tmp_path / "out"),
-            "--workers",
-            "1",
-            "--methods",
-            "baseline",
-            "euclid",
-            "--tune-only",
-        ]
-    )
-    assert "skipping euclid on Blackjack" in capsys.readouterr().out
 
 
 # ----------------------------------------------------------------------------- method specs
@@ -400,12 +359,12 @@ def test_csv_round_trip(tmp_path: Path) -> None:
 def test_tune_end_to_end(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     config, out = write_config(tmp_path), tmp_path / "out"
     summary = tune.main(["--config", str(config), "--output", str(out), "--workers", "1"])
-    assert "skipping" not in capsys.readouterr().out
     for name in (
         "tuning.csv",
         "history.csv",
         "summary.csv",
         "tuning_blackjack.png",
+        "tuning_grid_blackjack.png",
         "learning_curves_blackjack.png",
     ):
         assert (out / name).exists(), name
@@ -478,6 +437,56 @@ def test_figures_render_mathtext_labels_per_problem(tmp_path: Path) -> None:
     assert [p.name for p in curves] == ["learning_curves_gridworld.png", "learning_curves_blackjack.png"]
     assert [p.name for p in grids] == ["tuning_gridworld.png", "tuning_blackjack.png"]
     assert all(p.stat().st_size > 10_000 for p in curves + grids)
+
+
+def test_tuning_grid_lays_out_every_combination(tmp_path: Path) -> None:
+    """Rows = step size, columns = outer x inner of the other tuned parameters; fixed parameters are
+    not axes; a combination without an update is blank; the chosen combination is found."""
+    from ie692_rl.plotting import _Grid, plot_tuning_grid
+
+    tuning = [
+        {
+            "problem": "GridWorld",
+            "method": "true_online_td",
+            "spmd.step_size": eta,
+            "estimator.eta": alpha,
+            "estimator.lam": lam,
+            "estimator.n_steps": 50_000,
+            "min_updates": 0 if (eta, alpha, lam) == (100.0, 0.5, 0.95) else 2,
+            "mean_gap_lower": eta / 100 + alpha + lam / 10,
+            "mean_gap_upper": 1.0,
+        }
+        for eta in (1.0, 10.0, 100.0)
+        for alpha in (0.02, 0.1, 0.5)
+        for lam in (0.5, 0.8, 0.95)
+    ] + [
+        {
+            "problem": "GridWorld",
+            "method": "baseline",
+            "spmd.step_size": eta,
+            "estimator.bias": 0.01,
+            "min_updates": 1,
+            "mean_gap_lower": 1 / eta,
+            "mean_gap_upper": 1.0,
+        }
+        for eta in (1.0, 10.0, 100.0)
+    ]
+    grid = _Grid(tuning[:27], "mean_gap_lower")
+    assert grid.row_key == "spmd.step_size"
+    assert grid.col_keys == ["estimator.eta", "estimator.lam"]
+    assert grid.values.shape == (3, 9)
+    assert np.isnan(grid.values[2, 8])
+    assert np.isfinite(grid.values).sum() == 26
+    assert grid.values[0, 0] == pytest.approx(0.01 + 0.02 + 0.05)
+    baseline = _Grid(tuning[27:], "mean_gap_lower")
+    assert baseline.col_keys == []
+    assert baseline.values.shape == (3, 1)
+    labels = {"true_online_td": r"True Online TD($\lambda$)", "baseline": "KL (Baseline)"}
+    [path] = plot_tuning_grid(
+        tuning, ["baseline", "true_online_td"], labels, {"GridWorld": "GridWorld"}, tmp_path
+    )
+    assert path.name == "tuning_grid_gridworld.png"
+    assert path.stat().st_size > 10_000
 
 
 def history_rows_for(seed: int) -> list[dict[str, object]]:

@@ -37,8 +37,8 @@ from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 import numpy as np
+from numba import njit
 
-from ie692_rl._jit import njit_generic
 from ie692_rl.core.policy import check_policy, policy_cdf, sample_action
 from ie692_rl.core.tomc import return_window
 from ie692_rl.envs.base import Environment, StepKernel
@@ -189,7 +189,7 @@ class RolloutCertifier:
         )
 
 
-@njit_generic
+@njit
 def _rollout_kernel(
     step: StepKernel,
     params: tuple[Any, ...],
@@ -226,7 +226,7 @@ def _rollout_kernel(
     return mean, variance, steps
 
 
-@njit_generic
+@njit
 def _value_kernel(
     step: StepKernel,
     params: tuple[Any, ...],

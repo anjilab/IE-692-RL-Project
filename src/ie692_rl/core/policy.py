@@ -1,9 +1,9 @@
 """Tabular stochastic policies stored as pi[state, action]."""
 
 import numpy as np
+from numba import njit
 
-from ie692_rl._jit import njit
-from ie692_rl.types import FloatArray, IntArray
+from ie692_rl.types import FloatArray
 
 
 def uniform_policy(n_states: int, n_actions: int) -> FloatArray:
@@ -24,7 +24,7 @@ def policy_cdf(policy: FloatArray) -> FloatArray:
     return cdf
 
 
-@njit
+@njit(cache=True)
 def sample_action(cdf_row: FloatArray, prob_row: FloatArray, rng: np.random.Generator) -> int:
     """Draw an action from one policy row with a single uniform number.
 
@@ -39,14 +39,3 @@ def sample_action(cdf_row: FloatArray, prob_row: FloatArray, rng: np.random.Gene
                 return a
             last = a
     return last
-
-
-@njit
-def sample_actions(
-    cdf: FloatArray, policy: FloatArray, states: IntArray, rng: np.random.Generator
-) -> IntArray:
-    """One action per state in ``states`` (for notebooks and tests)."""
-    actions = np.empty(states.shape[0], dtype=np.int64)
-    for i in range(states.shape[0]):
-        actions[i] = sample_action(cdf[states[i]], policy[states[i]], rng)
-    return actions

@@ -23,8 +23,9 @@ Examples:
     python tune.py --plot-only                       # redraw the figures from the saved CSVs
 
 Writes to --output (default results/tuned/): tuning.csv, history.csv (every iteration of every full
-run), summary.csv (final gaps vs the baseline), and per problem tuning_<problem>.png and
-learning_curves_<problem>.png (display names from the ``label`` keys in config.cfg).
+run), summary.csv (final gaps vs the baseline), and per problem tuning_<problem>.png (dot plot),
+tuning_grid_<problem>.png (heatmap of every combination) and learning_curves_<problem>.png (display
+names from the ``label`` keys in config.cfg).
 """
 
 import argparse
@@ -43,7 +44,6 @@ from ie692_rl.experiment import (
     best_per_method,
     default_workers,
     int_list,
-    is_available,
     load_config,
     map_jobs,
     method_label,
@@ -59,7 +59,7 @@ from ie692_rl.experiment import (
     tuning_rows,
     write_csv,
 )
-from ie692_rl.plotting import plot_learning_curves, plot_tuning
+from ie692_rl.plotting import plot_learning_curves, plot_tuning, plot_tuning_grid
 
 ROOT = Path(__file__).resolve().parent
 
@@ -104,14 +104,9 @@ def main(argv: list[str] | None = None) -> list[Row]:
     args.output.mkdir(parents=True, exist_ok=True)
 
     if args.plot_only:
-        plot_tuning(
-            list(read_csv(args.output / "tuning.csv")),
-            all_methods,
-            labels,
-            problem_labels,
-            args.output,
-            selection,
-        )
+        saved = list(read_csv(args.output / "tuning.csv"))
+        plot_tuning(saved, all_methods, labels, problem_labels, args.output, selection)
+        plot_tuning_grid(saved, all_methods, labels, problem_labels, args.output, selection)
         if (args.output / "history.csv").exists():
             plot_learning_curves(
                 list(read_csv(args.output / "history.csv")),
@@ -125,18 +120,13 @@ def main(argv: list[str] | None = None) -> list[Row]:
         return []
 
     specs = {(p, m): method_spec(config, m, p) for p in problems for m in methods}
-    for (problem, method), spec in list(specs.items()):
-        if not is_available(spec):
-            print(
-                f"skipping {method} on {problem}: its divergence {spec.divergence!r} is not implemented yet"
-            )
-            del specs[problem, method]
 
     tuned = tune(
         config_path, specs, budgets, float(tuning["tune_fraction"]), int_list(tuning["tuning_seeds"]), args
     )
     write_csv(args.output / "tuning.csv", tuned)
     plot_tuning(tuned, all_methods, labels, problem_labels, args.output, selection)
+    plot_tuning_grid(tuned, all_methods, labels, problem_labels, args.output, selection)
     report_choices(specs, tuned, selection)
     if args.tune_only:
         return []

@@ -15,7 +15,8 @@ uv sync --all-extras                     # with uv
 pip install -e ".[dev,notebooks]"        # or with pip, inside a virtual environment
 ```
 
-The dependencies are `numpy`, `numba` (which compiles the sampling loops) and `matplotlib`.
+The dependencies are `numpy`, `numba` (which compiles the sampling loops: TOMC, TD and the
+certifier's rollouts) and `matplotlib`.
 
 ## Running
 
@@ -23,7 +24,7 @@ The dependencies are `numpy`, `numba` (which compiles the sampling loops) and `m
 python tune.py                           # grid search, full runs, CSVs and figures -> results/tuned/
 python tune.py --problems Blackjack --methods baseline bregman_tsallis
 python tune.py --plot-only               # redraw the figures from saved CSVs
-pytest                                   # tests (ruff check . and mypy for lint and types)
+pytest                                   # tests (ruff check . for lint)
 python benchmarks/bench.py --run         # runtime and memory report -> results/benchmark.md
 ```
 
@@ -31,7 +32,8 @@ All settings are in `config.cfg`: problems, budgets, seeds, each method's parame
 display names used in figures. Tuning follows the handout: at most three parameters with three values
 each, run on 10% of the budget. The best combination is the one with the smallest certified lower
 bound on the optimality gap (model-free, `core/optimality.py`); it then runs on the full budget with
-20 test seeds.
+20 test seeds. Per problem, `tuning_grid_<problem>.png` shows every combination's lower bound as a
+heatmap (chosen cell outlined) and `learning_curves_<problem>.png` the full runs.
 
 ## Problem setup
 
